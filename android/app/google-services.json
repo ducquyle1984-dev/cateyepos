@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "765053941387",
+    "project_id": "cateyepos",
+    "storage_bucket": "cateyepos.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:765053941387:android:e8f05ec3c1f40bbceb468e",
+        "android_client_info": {
+          "package_name": "com.example.cateye_pos"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyChL8SAIkD0AZ7cPuUFPOJtTxA7_23otIg"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
