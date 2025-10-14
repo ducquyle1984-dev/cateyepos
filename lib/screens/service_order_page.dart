@@ -37,6 +37,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   String? _selectedCategoryId;
   String?
   _preSelectedTechnicianId; // Track pre-selected technician from dashboard
+  bool _showDiscountSection = false; // Control discount section visibility
 
   // Loyalty points settings
   double _pointsPerDollar = 1.0;
@@ -668,149 +669,187 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                     ),
                     const SizedBox(height: 16),
 
-                    // Quick Discount Section
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade50,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.blue.shade200),
+                    // Discount Section Toggle
+                    if (!_showDiscountSection) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _orderItems.isNotEmpty
+                              ? () =>
+                                    setState(() => _showDiscountSection = true)
+                              : null,
+                          icon: const Icon(Icons.local_offer, size: 16),
+                          label: const Text(
+                            'Apply Discount',
+                            style: TextStyle(fontSize: 14),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue.shade100,
+                            foregroundColor: Colors.blue.shade700,
+                            elevation: 0,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
                       ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.local_offer,
-                                size: 16,
-                                color: Colors.blue.shade600,
-                              ),
-                              const SizedBox(width: 8),
-                              const Text(
-                                'Quick Discounts',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
+                    ] else ...[
+                      // Quick Discount Section
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: Colors.blue.shade200),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.local_offer,
+                                  size: 16,
+                                  color: Colors.blue.shade600,
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-
-                          // Percentage presets
-                          const Text(
-                            'Percentage:',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
+                                const SizedBox(width: 8),
+                                const Text(
+                                  'Quick Discounts',
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                const Spacer(),
+                                IconButton(
+                                  onPressed: () => setState(
+                                    () => _showDiscountSection = false,
+                                  ),
+                                  icon: const Icon(Icons.close, size: 16),
+                                  tooltip: 'Hide Discounts',
+                                  constraints: const BoxConstraints(
+                                    minWidth: 24,
+                                    minHeight: 24,
+                                  ),
+                                  padding: EdgeInsets.zero,
+                                ),
+                              ],
                             ),
-                          ),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 6,
-                            children: [
-                              _buildQuickDiscountButton('5%', 5, true),
-                              _buildQuickDiscountButton('10%', 10, true),
-                              _buildQuickDiscountButton('15%', 15, true),
-                              _buildQuickDiscountButton('20%', 20, true),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-
-                          // Fixed amount presets
-                          const Text(
-                            'Fixed Amount:',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Wrap(
-                            spacing: 6,
-                            children: [
-                              _buildQuickDiscountButton('\$5', 5, false),
-                              _buildQuickDiscountButton('\$10', 10, false),
-                              _buildQuickDiscountButton('\$20', 20, false),
-                              _buildQuickDiscountButton('\$50', 50, false),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-
-                          // Apply to options
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: _orderItems.isNotEmpty
-                                      ? () => _showSimpleDiscountDialog(false)
-                                      : null,
-                                  icon: const Icon(Icons.receipt, size: 14),
-                                  label: const Text(
-                                    'Order',
-                                    style: TextStyle(fontSize: 11),
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green.shade100,
-                                    foregroundColor: Colors.green.shade700,
-                                    elevation: 0,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 8,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: _orderItems.isNotEmpty
-                                      ? () => _showSimpleDiscountDialog(true)
-                                      : null,
-                                  icon: const Icon(Icons.list, size: 14),
-                                  label: const Text(
-                                    'Item',
-                                    style: TextStyle(fontSize: 11),
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.orange.shade100,
-                                    foregroundColor: Colors.orange.shade700,
-                                    elevation: 0,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 8,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-
-                          // Remove discount button if there's an active order discount
-                          if (_currentOrder.orderDiscount != null) ...[
                             const SizedBox(height: 8),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                onPressed: _removeOrderDiscount,
-                                icon: const Icon(Icons.clear, size: 14),
-                                label: const Text(
-                                  'Remove Order Discount',
-                                  style: TextStyle(fontSize: 11),
+
+                            // Percentage presets
+                            const Text(
+                              'Percentage:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 6,
+                              children: [
+                                _buildQuickDiscountButton('5%', 5, true),
+                                _buildQuickDiscountButton('10%', 10, true),
+                                _buildQuickDiscountButton('15%', 15, true),
+                                _buildQuickDiscountButton('20%', 20, true),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+
+                            // Fixed amount presets
+                            const Text(
+                              'Fixed Amount:',
+                              style: TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Wrap(
+                              spacing: 6,
+                              children: [
+                                _buildQuickDiscountButton('\$5', 5, false),
+                                _buildQuickDiscountButton('\$10', 10, false),
+                                _buildQuickDiscountButton('\$20', 20, false),
+                                _buildQuickDiscountButton('\$50', 50, false),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+
+                            // Apply to options
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: _orderItems.isNotEmpty
+                                        ? () => _showSimpleDiscountDialog(false)
+                                        : null,
+                                    icon: const Icon(Icons.receipt, size: 14),
+                                    label: const Text(
+                                      'Order',
+                                      style: TextStyle(fontSize: 11),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.green.shade100,
+                                      foregroundColor: Colors.green.shade700,
+                                      elevation: 0,
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                      ),
+                                    ),
+                                  ),
                                 ),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.red.shade100,
-                                  foregroundColor: Colors.red.shade700,
-                                  elevation: 0,
-                                  padding: const EdgeInsets.symmetric(
-                                    vertical: 8,
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: ElevatedButton.icon(
+                                    onPressed: _orderItems.isNotEmpty
+                                        ? () => _showSimpleDiscountDialog(true)
+                                        : null,
+                                    icon: const Icon(Icons.list, size: 14),
+                                    label: const Text(
+                                      'Item',
+                                      style: TextStyle(fontSize: 11),
+                                    ),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.orange.shade100,
+                                      foregroundColor: Colors.orange.shade700,
+                                      elevation: 0,
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 8,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+
+                            // Remove discount button if there's an active order discount
+                            if (_currentOrder.orderDiscount != null) ...[
+                              const SizedBox(height: 8),
+                              SizedBox(
+                                width: double.infinity,
+                                child: ElevatedButton.icon(
+                                  onPressed: _removeOrderDiscount,
+                                  icon: const Icon(Icons.clear, size: 14),
+                                  label: const Text(
+                                    'Remove Order Discount',
+                                    style: TextStyle(fontSize: 11),
+                                  ),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.red.shade100,
+                                    foregroundColor: Colors.red.shade700,
+                                    elevation: 0,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 8,
+                                    ),
                                   ),
                                 ),
                               ),
-                            ),
+                            ],
                           ],
-                        ],
+                        ),
                       ),
-                    ),
+                    ],
+
                     const SizedBox(height: 16),
 
                     SizedBox(
@@ -1661,15 +1700,17 @@ class _CheckoutDialog extends StatefulWidget {
 class _CheckoutDialogState extends State<_CheckoutDialog> {
   PaymentMethod _selectedPaymentMethod = PaymentMethod.cash;
   double _amountPaid = 0.0;
+  double _totalPaidSoFar = 0.0;
+  List<double> _partialPayments = [];
   bool _isProcessingPayment = false;
   final TextEditingController _amountController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    // Pre-fill with total amount
-    _amountPaid = widget.currentOrder.total;
-    _amountController.text = _amountPaid.toStringAsFixed(2);
+    // Start with zero by default
+    _amountPaid = 0.0;
+    _amountController.text = '';
   }
 
   @override
@@ -1678,8 +1719,111 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
     super.dispose();
   }
 
+  double get _remainingBalance {
+    return widget.currentOrder.total - _totalPaidSoFar;
+  }
+
   double get _changeAmount {
-    return _amountPaid - widget.currentOrder.total;
+    return _amountPaid - _remainingBalance;
+  }
+
+  // Partial payment methods
+  void _addPartialPayment(double amount) {
+    setState(() {
+      _partialPayments.add(amount);
+      _totalPaidSoFar += amount;
+      _amountPaid = 0.0;
+      _amountController.clear();
+    });
+  }
+
+  bool get _isOrderFullyPaid {
+    return _totalPaidSoFar >= widget.currentOrder.total;
+  }
+
+  void _resetPartialPayments() {
+    setState(() {
+      _partialPayments.clear();
+      _totalPaidSoFar = 0.0;
+      _amountPaid = 0.0;
+      _amountController.clear();
+    });
+  }
+
+  // Numpad helper methods
+
+  Widget _buildSimpleNumButton(String value) {
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: () => _addToAmount(value),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black87,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        child: Text(
+          value,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  void _setAmount(double amount) {
+    setState(() {
+      _amountPaid = amount;
+      _amountController.text = amount.toStringAsFixed(2);
+    });
+  }
+
+  void _addToAmount(String digit) {
+    String currentText = _amountController.text;
+
+    // Handle decimal point
+    if (digit == '.') {
+      if (currentText.contains('.')) return; // Already has decimal
+      if (currentText.isEmpty) currentText = '0';
+    }
+
+    // Prevent multiple leading zeros
+    if (digit == '0' && currentText == '0') return;
+    if (currentText == '0' && digit != '.') currentText = '';
+
+    String newText = currentText + digit;
+    double newAmount = double.tryParse(newText) ?? 0.0;
+
+    // Limit to reasonable amount (max $9999.99)
+    if (newAmount > 9999.99) return;
+
+    setState(() {
+      _amountPaid = newAmount;
+      _amountController.text = newText;
+    });
+  }
+
+  void _backspaceAmount() {
+    String currentText = _amountController.text;
+    if (currentText.isNotEmpty) {
+      String newText = currentText.substring(0, currentText.length - 1);
+      if (newText.isEmpty) newText = '0';
+
+      setState(() {
+        _amountPaid = double.tryParse(newText) ?? 0.0;
+        _amountController.text = newText == '0' ? '' : newText;
+      });
+    }
+  }
+
+  void _clearAmount() {
+    setState(() {
+      _amountPaid = 0.0;
+      _amountController.text = '';
+    });
   }
 
   @override
@@ -1793,85 +1937,321 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
             ),
             const SizedBox(height: 16),
 
-            // Amount Paid (only for cash)
+            // Cash Tender Section (only for cash)
             if (_selectedPaymentMethod == PaymentMethod.cash) ...[
               const Text(
-                'Amount Paid:',
+                'Cash Payment:',
                 style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
               ),
-              const SizedBox(height: 8),
-              TextFormField(
-                controller: _amountController,
-                decoration: const InputDecoration(
-                  labelText: 'Amount Paid',
-                  prefixText: '\$',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (value) {
-                  setState(() {
-                    _amountPaid = double.tryParse(value) ?? 0.0;
-                  });
-                },
-              ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
 
-              // Change calculation
-              if (_amountPaid >= widget.currentOrder.total) ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.green.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.green.shade200),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Change:',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
+              // Order Summary (Compact)
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey.shade300),
+                ),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          _totalPaidSoFar > 0 ? 'Remaining:' : 'Total Due:',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                      Text(
-                        '\$${_changeAmount.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green.shade700,
+                        Text(
+                          '\$${_remainingBalance.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 20,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade700,
+                          ),
                         ),
+                      ],
+                    ),
+                    if (_totalPaidSoFar > 0) ...[
+                      const SizedBox(height: 4),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Already Paid: \$${_totalPaidSoFar.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Colors.green.shade600,
+                            ),
+                          ),
+                          Text(
+                            'Total: \$${widget.currentOrder.total.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              color: Colors.grey,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+
+              // Exact Amount Button
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton(
+                    onPressed: () => _setAmount(_remainingBalance),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade100,
+                      foregroundColor: Colors.green.shade700,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: Text(
+                      _totalPaidSoFar > 0
+                          ? 'Pay Remaining (\$${_remainingBalance.toStringAsFixed(2)})'
+                          : 'Pay Exact Amount (\$${widget.currentOrder.total.toStringAsFixed(2)})',
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
                   ),
                 ),
-              ] else ...[
-                Container(
-                  padding: const EdgeInsets.all(12),
-                  decoration: BoxDecoration(
-                    color: Colors.red.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.red.shade200),
-                  ),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text(
-                        'Insufficient Amount:',
-                        style: TextStyle(fontWeight: FontWeight.bold),
-                      ),
-                      Text(
-                        '\$${(widget.currentOrder.total - _amountPaid).toStringAsFixed(2)} short',
-                        style: TextStyle(
-                          fontWeight: FontWeight.bold,
-                          color: Colors.red.shade700,
+              ),
+              const SizedBox(height: 16),
+
+              // Cash Input with Live Display
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.blue.shade200, width: 2),
+                ),
+                child: Column(
+                  children: [
+                    // Live Cash Amount Display (Prominent)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(20),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                          color: Colors.blue.shade300,
+                          width: 2,
                         ),
                       ),
-                    ],
-                  ),
+                      child: Column(
+                        children: [
+                          const Text(
+                            'Cash Tendered',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                              color: Colors.grey,
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '\$${_amountPaid.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 32,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade700,
+                            ),
+                          ),
+                          if (_amountPaid >= _remainingBalance &&
+                              _amountPaid > 0) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.green.shade100,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                'Change: \$${_changeAmount.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green.shade700,
+                                ),
+                              ),
+                            ),
+                          ] else if (_amountPaid > 0 &&
+                              _amountPaid < _remainingBalance) ...[
+                            const SizedBox(height: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 4,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.orange.shade100,
+                                borderRadius: BorderRadius.circular(20),
+                              ),
+                              child: Text(
+                                'Need: \$${(_remainingBalance - _amountPaid).toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.orange.shade700,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    // On-Screen Keypad
+                    const Text(
+                      'Enter Amount',
+                      style: TextStyle(
+                        fontSize: 14,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Number pad grid
+                    Column(
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(child: _buildSimpleNumButton('1')),
+                            const SizedBox(width: 8),
+                            Expanded(child: _buildSimpleNumButton('2')),
+                            const SizedBox(width: 8),
+                            Expanded(child: _buildSimpleNumButton('3')),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(child: _buildSimpleNumButton('4')),
+                            const SizedBox(width: 8),
+                            Expanded(child: _buildSimpleNumButton('5')),
+                            const SizedBox(width: 8),
+                            Expanded(child: _buildSimpleNumButton('6')),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(child: _buildSimpleNumButton('7')),
+                            const SizedBox(width: 8),
+                            Expanded(child: _buildSimpleNumButton('8')),
+                            const SizedBox(width: 8),
+                            Expanded(child: _buildSimpleNumButton('9')),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Expanded(child: _buildSimpleNumButton('0')),
+                            const SizedBox(width: 8),
+                            Expanded(child: _buildSimpleNumButton('.')),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: SizedBox(
+                                height: 50,
+                                child: ElevatedButton(
+                                  onPressed: _amountController.text.isNotEmpty
+                                      ? _backspaceAmount
+                                      : null,
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor:
+                                        _amountController.text.isNotEmpty
+                                        ? Colors.red.shade100
+                                        : Colors.grey.shade200,
+                                    foregroundColor:
+                                        _amountController.text.isNotEmpty
+                                        ? Colors.red.shade700
+                                        : Colors.grey.shade500,
+                                    elevation: _amountController.text.isNotEmpty
+                                        ? 2
+                                        : 0,
+                                    shape: RoundedRectangleBorder(
+                                      borderRadius: BorderRadius.circular(8),
+                                      side: BorderSide(
+                                        color: _amountController.text.isNotEmpty
+                                            ? Colors.red.shade300
+                                            : Colors.grey.shade400,
+                                      ),
+                                    ),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        Icons.backspace_outlined,
+                                        size: 18,
+                                        color: _amountController.text.isNotEmpty
+                                            ? Colors.red.shade700
+                                            : Colors.grey.shade500,
+                                      ),
+                                      Text(
+                                        'DEL',
+                                        style: TextStyle(
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.bold,
+                                          color:
+                                              _amountController.text.isNotEmpty
+                                              ? Colors.red.shade700
+                                              : Colors.grey.shade500,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Clear All button
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        onPressed: _amountPaid > 0 ? _clearAmount : null,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _amountPaid > 0
+                              ? Colors.orange.shade100
+                              : Colors.grey.shade200,
+                          foregroundColor: _amountPaid > 0
+                              ? Colors.orange.shade700
+                              : Colors.grey.shade500,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                        ),
+                        child: const Text(
+                          'Clear All',
+                          style: TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ],
           ],
         ),
@@ -1883,11 +2263,33 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
               : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
+        if (_partialPayments.isNotEmpty)
+          TextButton(
+            onPressed: _isProcessingPayment ? null : _resetPartialPayments,
+            child: const Text('Reset'),
+          ),
+        if (_selectedPaymentMethod == PaymentMethod.cash &&
+            _amountPaid > 0 &&
+            _amountPaid < _remainingBalance &&
+            !_isOrderFullyPaid)
+          ElevatedButton(
+            onPressed: _isProcessingPayment
+                ? null
+                : () => _addPartialPayment(_amountPaid),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.orange.shade600,
+            ),
+            child: Text(
+              'Add Partial Payment (\$${_amountPaid.toStringAsFixed(2)})',
+            ),
+          ),
         ElevatedButton(
           onPressed:
               _isProcessingPayment ||
                   (_selectedPaymentMethod == PaymentMethod.cash &&
-                      _amountPaid < widget.currentOrder.total)
+                      (_amountPaid <= 0 ||
+                          (_amountPaid < _remainingBalance &&
+                              !_isOrderFullyPaid)))
               ? null
               : _processPayment,
           child: _isProcessingPayment
@@ -1896,7 +2298,7 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Complete Payment'),
+              : Text(_isOrderFullyPaid ? 'Complete Order' : 'Complete Payment'),
         ),
       ],
     );
@@ -1932,21 +2334,92 @@ class _CheckoutDialogState extends State<_CheckoutDialog> {
         // This would update the customer's loyaltyPoints field
       }
 
-      // Show success message
+      // Show success message with change due dialog for cash payments
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Payment completed successfully! ${_selectedPaymentMethod == PaymentMethod.cash && _changeAmount > 0 ? 'Change: \$${_changeAmount.toStringAsFixed(2)}' : ''}',
+        if (_selectedPaymentMethod == PaymentMethod.cash && _changeAmount > 0) {
+          // Show prominent change due dialog
+          showDialog(
+            context: context,
+            barrierDismissible: false,
+            builder: (context) => AlertDialog(
+              title: const Row(
+                children: [
+                  Icon(Icons.monetization_on, color: Colors.green, size: 32),
+                  SizedBox(width: 8),
+                  Text('Change Due'),
+                ],
+              ),
+              content: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.shade200, width: 2),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      'Give back to customer:',
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.green.shade800,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '\$${_changeAmount.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 36,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              actions: [
+                ElevatedButton(
+                  onPressed: () {
+                    Navigator.of(context).pop(); // Close change dialog
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text('Payment completed successfully!'),
+                        backgroundColor: Colors.green,
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                    widget.onPaymentComplete();
+                  },
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 24,
+                      vertical: 12,
+                    ),
+                  ),
+                  child: const Text('Change Given'),
+                ),
+              ],
             ),
-            backgroundColor: Colors.green,
-            duration: const Duration(seconds: 3),
-          ),
-        );
+          );
+        } else {
+          // Regular success message for non-cash or exact payments
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                _selectedPaymentMethod == PaymentMethod.cash
+                    ? 'Payment completed successfully! (Exact amount)'
+                    : 'Payment completed successfully!',
+              ),
+              backgroundColor: Colors.green,
+              duration: const Duration(seconds: 2),
+            ),
+          );
+          widget.onPaymentComplete();
+        }
       }
-
-      // Call completion callback
-      widget.onPaymentComplete();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
