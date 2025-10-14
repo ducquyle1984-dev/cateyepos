@@ -369,6 +369,10 @@ class _HomeContentState extends State<_HomeContent> {
             const SizedBox(height: 16),
           ],
 
+          // Active Technicians Section
+          _buildActiveTechniciansSection(),
+          const SizedBox(height: 16),
+
           // Grid view with fixed height to prevent overflow
           SizedBox(
             height: 400, // Fixed height for the grid
@@ -477,7 +481,7 @@ class _HomeContentState extends State<_HomeContent> {
             ),
             const SizedBox(height: 8),
             SizedBox(
-              height: 180, // Further increased height to prevent overflow
+              height: 200, // Increased height to accommodate more content
               child: ListView.builder(
                 scrollDirection: Axis.horizontal,
                 itemCount: _inProgressOrders.length,
@@ -515,7 +519,7 @@ class _HomeContentState extends State<_HomeContent> {
                       ),
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.start,
+                        mainAxisSize: MainAxisSize.min,
                         children: [
                           Row(
                             children: [
@@ -648,42 +652,66 @@ class _HomeContentState extends State<_HomeContent> {
                           const SizedBox(height: 6),
                           // Service Items (moved below technicians)
                           if (order.id != null &&
-                              _orderItems[order.id!]?.isNotEmpty == true) ...[
-                            const Text(
-                              'Services:',
-                              style: TextStyle(
-                                fontSize: 10,
-                                fontWeight: FontWeight.w600,
-                                color: Colors.black54,
-                              ),
-                            ),
-                            const SizedBox(height: 3),
-                            ..._orderItems[order.id!]!
-                                .take(2)
-                                .map(
-                                  (item) => Padding(
-                                    padding: const EdgeInsets.only(bottom: 1),
-                                    child: Text(
-                                      '• ${item.serviceName}',
-                                      style: const TextStyle(
-                                        fontSize: 10,
-                                        color: Colors.black87,
-                                      ),
-                                      overflow: TextOverflow.ellipsis,
-                                      maxLines: 1,
+                              _orderItems[order.id!]?.isNotEmpty == true)
+                            Flexible(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text(
+                                    'Services:',
+                                    style: TextStyle(
+                                      fontSize: 10,
+                                      fontWeight: FontWeight.w600,
+                                      color: Colors.black54,
                                     ),
                                   ),
-                                ),
-                            if (_orderItems[order.id!]!.length > 2)
-                              Text(
-                                '+ ${_orderItems[order.id!]!.length - 2} more',
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  color: Colors.grey.shade600,
-                                  fontStyle: FontStyle.italic,
-                                ),
+                                  const SizedBox(height: 3),
+                                  // Use a constrained container for services list
+                                  ConstrainedBox(
+                                    constraints: const BoxConstraints(
+                                      maxHeight:
+                                          60, // Limit height for services
+                                    ),
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        ..._orderItems[order.id!]!
+                                            .take(3) // Show max 3 services
+                                            .map(
+                                              (item) => Padding(
+                                                padding: const EdgeInsets.only(
+                                                  bottom: 1,
+                                                ),
+                                                child: Text(
+                                                  '• ${item.serviceName}',
+                                                  style: const TextStyle(
+                                                    fontSize: 10,
+                                                    color: Colors.black87,
+                                                  ),
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  maxLines: 1,
+                                                ),
+                                              ),
+                                            ),
+                                        if (_orderItems[order.id!]!.length > 3)
+                                          Text(
+                                            '+ ${_orderItems[order.id!]!.length - 3} more',
+                                            style: TextStyle(
+                                              fontSize: 9,
+                                              color: Colors.grey.shade600,
+                                              fontStyle: FontStyle.italic,
+                                            ),
+                                          ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
                               ),
-                          ],
+                            ),
                         ],
                       ),
                     ),
@@ -693,6 +721,114 @@ class _HomeContentState extends State<_HomeContent> {
             ),
           ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildActiveTechniciansSection() {
+    // Get active technicians (employees)
+    final activeTechnicians = _employees.values
+        .where((employee) => employee.isActive)
+        .toList();
+
+    if (activeTechnicians.isEmpty) {
+      return const SizedBox.shrink();
+    }
+
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          colors: [Colors.blue.shade100, Colors.blue.shade50],
+          begin: Alignment.centerLeft,
+          end: Alignment.centerRight,
+        ),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade300, width: 1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.people_alt, color: Colors.blue.shade700, size: 24),
+              const SizedBox(width: 8),
+              Text(
+                'Active Technicians',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.blue.shade800,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          // Grid of technician tiles
+          GridView.builder(
+            shrinkWrap: true,
+            physics: const NeverScrollableScrollPhysics(),
+            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+              crossAxisCount: 3, // 3 technicians per row
+              mainAxisSpacing: 8,
+              crossAxisSpacing: 8,
+              childAspectRatio: 2.5, // Adjust aspect ratio for better layout
+            ),
+            itemCount: activeTechnicians.length,
+            itemBuilder: (context, index) {
+              final technician = activeTechnicians[index];
+              return _buildTechnicianTile(technician);
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTechnicianTile(Employee technician) {
+    return GestureDetector(
+      onTap: () {
+        // Navigate to ServiceOrderPage with pre-selected technician
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) =>
+                ServiceOrderPage(preSelectedTechnicianId: technician.id),
+          ),
+        ).then((_) => loadInProgressOrders());
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.blue.shade200, width: 1),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 4,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.person, color: Colors.blue.shade600, size: 20),
+            const SizedBox(height: 4),
+            Text(
+              technician.name,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w500,
+                color: Colors.blue.shade800,
+              ),
+              textAlign: TextAlign.center,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }

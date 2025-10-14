@@ -11,8 +11,13 @@ enum PaymentMethod { cash, credit, debit }
 
 class ServiceOrderPage extends StatefulWidget {
   final ServiceOrder? existingOrder;
+  final String? preSelectedTechnicianId;
 
-  const ServiceOrderPage({super.key, this.existingOrder});
+  const ServiceOrderPage({
+    super.key,
+    this.existingOrder,
+    this.preSelectedTechnicianId,
+  });
 
   @override
   State<ServiceOrderPage> createState() => _ServiceOrderPageState();
@@ -30,6 +35,8 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   bool _isSaving = false;
   Customer? _selectedCustomer;
   String? _selectedCategoryId;
+  String?
+  _preSelectedTechnicianId; // Track pre-selected technician from dashboard
 
   // Loyalty points settings
   double _pointsPerDollar = 1.0;
@@ -37,6 +44,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   @override
   void initState() {
     super.initState();
+    _preSelectedTechnicianId = widget.preSelectedTechnicianId;
     _initializeOrder();
     _loadData();
     _loadLoyaltySettings();
@@ -525,6 +533,12 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                       ),
                       const SizedBox(height: 16),
 
+                      // Technician Selector (if pre-selected)
+                      if (_preSelectedTechnicianId != null) ...[
+                        _buildTechnicianSelector(),
+                        const SizedBox(height: 16),
+                      ],
+
                       // Category Filter Chips
                       if (_categories.isNotEmpty)
                         SizedBox(
@@ -917,6 +931,39 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                     '${service.durationMinutes} min',
                     style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
                   ),
+                  // Show technician indicator if pre-selected
+                  if (_preSelectedTechnicianId != null) ...[
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 4,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade100,
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.person,
+                            size: 10,
+                            color: Colors.blue.shade700,
+                          ),
+                          const SizedBox(width: 2),
+                          Text(
+                            'Auto',
+                            style: TextStyle(
+                              fontSize: 8,
+                              color: Colors.blue.shade700,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ],
               ),
             ],
@@ -992,7 +1039,104 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     );
   }
 
+  Widget _buildTechnicianSelector() {
+    final currentTechnician = _preSelectedTechnicianId != null
+        ? _availableEmployees.firstWhere(
+            (emp) => emp.id == _preSelectedTechnicianId,
+            orElse: () => _availableEmployees.first,
+          )
+        : null;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.blue.shade200),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.person, color: Colors.blue.shade600, size: 20),
+          const SizedBox(width: 8),
+          Text(
+            'Selected Technician: ',
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: FontWeight.w500,
+              color: Colors.blue.shade800,
+            ),
+          ),
+          Expanded(
+            child: Text(
+              currentTechnician?.name ?? 'None',
+              style: TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.bold,
+                color: Colors.blue.shade900,
+              ),
+            ),
+          ),
+          TextButton(
+            onPressed: _showTechnicianChangeDialog,
+            child: const Text('Change'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showTechnicianChangeDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Technician'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: _availableEmployees.length,
+            itemBuilder: (context, index) {
+              final employee = _availableEmployees[index];
+              return RadioListTile<String>(
+                title: Text(employee.name),
+                value: employee.id,
+                groupValue: _preSelectedTechnicianId,
+                onChanged: (value) {
+                  setState(() {
+                    _preSelectedTechnicianId = value;
+                  });
+                  Navigator.of(context).pop();
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _addServiceWithTechnician(ServiceCatalog service) {
+    // If there's a pre-selected technician, use it directly
+    if (_preSelectedTechnicianId != null) {
+      final preSelectedEmployee = _availableEmployees.firstWhere(
+        (emp) => emp.id == _preSelectedTechnicianId,
+        orElse: () => _availableEmployees.first,
+      );
+      _addServiceOrderItem(
+        service,
+        preSelectedEmployee,
+        1,
+      ); // Default quantity of 1
+      return;
+    }
+
+    // Otherwise, show technician selection dialog
     showDialog(
       context: context,
       builder: (context) => _TechnicianSelectionDialog(
