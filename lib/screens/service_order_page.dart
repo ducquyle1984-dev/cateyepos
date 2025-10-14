@@ -1314,23 +1314,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     }
   }
 
-  IconData _getStatusIcon(ServiceOrderStatus status) {
-    switch (status) {
-      case ServiceOrderStatus.newOrder:
-        return Icons.fiber_new;
-      case ServiceOrderStatus.inProgress:
-        return Icons.hourglass_bottom;
-      case ServiceOrderStatus.completed:
-        return Icons.check_circle;
-      case ServiceOrderStatus.cancelled:
-        return Icons.cancel;
-    }
-  }
-
-  String _formatDateTime(DateTime dateTime) {
-    return '${dateTime.month}/${dateTime.day}/${dateTime.year} at ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
-  }
-
   Widget _buildQuickDiscountButton(
     String label,
     double amount,
@@ -1676,23 +1659,309 @@ class _CheckoutDialog extends StatefulWidget {
 }
 
 class _CheckoutDialogState extends State<_CheckoutDialog> {
+  PaymentMethod _selectedPaymentMethod = PaymentMethod.cash;
+  double _amountPaid = 0.0;
+  bool _isProcessingPayment = false;
+  final TextEditingController _amountController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    // Pre-fill with total amount
+    _amountPaid = widget.currentOrder.total;
+    _amountController.text = _amountPaid.toStringAsFixed(2);
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  double get _changeAmount {
+    return _amountPaid - widget.currentOrder.total;
+  }
+
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Checkout'),
-      content: const Text('Checkout functionality would be implemented here'),
+      content: SizedBox(
+        width: double.maxFinite,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Order Summary
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Order #${widget.currentOrder.orderNumber}',
+                    style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('Total Amount:'),
+                      Text(
+                        '\$${widget.currentOrder.total.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (widget.selectedCustomer != null) ...[
+                    const SizedBox(height: 4),
+                    Text('Customer: ${widget.selectedCustomer!.fullName}'),
+                  ],
+                  if (widget.loyaltyPointsToEarn > 0) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Points to Earn: ${widget.loyaltyPointsToEarn}',
+                      style: TextStyle(
+                        color: Colors.blue.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+
+            // Payment Method Selection
+            const Text(
+              'Payment Method:',
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Column(
+              children: PaymentMethod.values.map((method) {
+                IconData icon;
+                String label;
+                Color color;
+
+                switch (method) {
+                  case PaymentMethod.cash:
+                    icon = Icons.money;
+                    label = 'Cash';
+                    color = Colors.green;
+                    break;
+                  case PaymentMethod.credit:
+                    icon = Icons.credit_card;
+                    label = 'Credit Card';
+                    color = Colors.blue;
+                    break;
+                  case PaymentMethod.debit:
+                    icon = Icons.payment;
+                    label = 'Debit Card';
+                    color = Colors.orange;
+                    break;
+                }
+
+                return RadioListTile<PaymentMethod>(
+                  title: Row(
+                    children: [
+                      Icon(icon, color: color, size: 20),
+                      const SizedBox(width: 8),
+                      Text(label),
+                    ],
+                  ),
+                  value: method,
+                  groupValue: _selectedPaymentMethod,
+                  onChanged: (PaymentMethod? value) {
+                    setState(() {
+                      _selectedPaymentMethod = value!;
+                    });
+                  },
+                );
+              }).toList(),
+            ),
+            const SizedBox(height: 16),
+
+            // Amount Paid (only for cash)
+            if (_selectedPaymentMethod == PaymentMethod.cash) ...[
+              const Text(
+                'Amount Paid:',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              TextFormField(
+                controller: _amountController,
+                decoration: const InputDecoration(
+                  labelText: 'Amount Paid',
+                  prefixText: '\$',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+                onChanged: (value) {
+                  setState(() {
+                    _amountPaid = double.tryParse(value) ?? 0.0;
+                  });
+                },
+              ),
+              const SizedBox(height: 8),
+
+              // Change calculation
+              if (_amountPaid >= widget.currentOrder.total) ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.green.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.green.shade200),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Change:',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        '\$${_changeAmount.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ] else ...[
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.red.shade200),
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text(
+                        'Insufficient Amount:',
+                        style: TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '\$${(widget.currentOrder.total - _amountPaid).toStringAsFixed(2)} short',
+                        style: TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ],
+        ),
+      ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _isProcessingPayment
+              ? null
+              : () => Navigator.of(context).pop(),
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: () {
-            widget.onPaymentComplete();
-          },
-          child: const Text('Complete Payment'),
+          onPressed:
+              _isProcessingPayment ||
+                  (_selectedPaymentMethod == PaymentMethod.cash &&
+                      _amountPaid < widget.currentOrder.total)
+              ? null
+              : _processPayment,
+          child: _isProcessingPayment
+              ? const SizedBox(
+                  width: 16,
+                  height: 16,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Text('Complete Payment'),
         ),
       ],
     );
+  }
+
+  Future<void> _processPayment() async {
+    setState(() {
+      _isProcessingPayment = true;
+    });
+
+    try {
+      // Update the order with payment information
+      final updatedOrder = widget.currentOrder.copyWith(
+        status: ServiceOrderStatus.completed,
+        completedAt: DateTime.now(),
+        paymentMethod: _selectedPaymentMethod.name,
+        isPaid: true,
+        paidAt: DateTime.now(),
+      );
+
+      // Save to Firebase
+      await FirebaseService.saveServiceOrder(updatedOrder);
+
+      // Award loyalty points if customer is selected
+      if (widget.selectedCustomer != null && widget.loyaltyPointsToEarn > 0) {
+        // Update the order with loyalty points earned
+        final finalOrder = updatedOrder.copyWith(
+          loyaltyPointsEarned: widget.loyaltyPointsToEarn,
+        );
+        await FirebaseService.saveServiceOrder(finalOrder);
+
+        // TODO: Implement customer loyalty points update in FirebaseService
+        // This would update the customer's loyaltyPoints field
+      }
+
+      // Show success message
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Payment completed successfully! ${_selectedPaymentMethod == PaymentMethod.cash && _changeAmount > 0 ? 'Change: \$${_changeAmount.toStringAsFixed(2)}' : ''}',
+            ),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
+
+      // Call completion callback
+      widget.onPaymentComplete();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isProcessingPayment = false;
+        });
+      }
+    }
   }
 }
