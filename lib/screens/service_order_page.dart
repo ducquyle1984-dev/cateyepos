@@ -39,6 +39,16 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   _preSelectedTechnicianId; // Track pre-selected technician from dashboard
   bool _showDiscountSection = false; // Control discount section visibility
 
+  // Payment flow state
+  bool _showPaymentOptions = false;
+  PaymentMethod? _selectedPaymentMethod;
+  bool _showCashCheckout = false;
+  double _amountPaid = 0.0;
+  double _totalPaidSoFar = 0.0;
+  List<double> _partialPayments = [];
+  bool _isProcessingPayment = false;
+  final TextEditingController _amountController = TextEditingController();
+
   // Loyalty points settings
   double _pointsPerDollar = 1.0;
   int _loyaltyPointsToEarn = 0;
@@ -50,6 +60,25 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     _initializeOrder();
     _loadData();
     _loadLoyaltySettings();
+  }
+
+  @override
+  void dispose() {
+    _amountController.dispose();
+    super.dispose();
+  }
+
+  // Payment calculation methods
+  double get _remainingBalance {
+    return _total - _totalPaidSoFar;
+  }
+
+  double get _changeAmount {
+    return _amountPaid - _remainingBalance;
+  }
+
+  bool get _isOrderFullyPaid {
+    return _totalPaidSoFar >= _total;
   }
 
   void _initializeOrder() async {
@@ -303,42 +332,10 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     }
   }
 
+  // This method is no longer used since we handle payments directly in the main page
   void _proceedToCheckout() async {
-    if (_orderItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add at least one service item')),
-      );
-      return;
-    }
-
-    // Save order first
-    await _saveOrder();
-
-    // Calculate loyalty points for checkout
-    _calculateLoyaltyPoints();
-
-    // Show checkout modal dialog
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => _CheckoutDialog(
-        currentOrder: _currentOrder,
-        orderItems: _orderItems,
-        selectedCustomer: _selectedCustomer,
-        loyaltyPointsToEarn: _loyaltyPointsToEarn,
-        onPaymentComplete: () {
-          // Update the current order status to completed
-          setState(() {
-            _currentOrder = _currentOrder.copyWith(
-              status: ServiceOrderStatus.completed,
-              completedAt: DateTime.now(),
-            );
-          });
-          Navigator.of(context).pop(); // Close dialog
-          Navigator.of(context).pop(); // Return to dashboard
-        },
-      ),
-    );
+    // This is now handled by the payment method selection buttons
+    // Left here for compatibility but not actually called
   }
 
   // Checkout-related methods
@@ -361,6 +358,76 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
       _pointsPerDollar,
     );
     setState(() {});
+  }
+
+  // Payment methods
+  void _selectPaymentMethod(PaymentMethod method) async {
+    // Save order first
+    await _saveOrder();
+    _calculateLoyaltyPoints();
+
+    setState(() {
+      _selectedPaymentMethod = method;
+    });
+
+    if (method == PaymentMethod.cash) {
+      setState(() {
+        _showCashCheckout = true;
+        _showPaymentOptions = false;
+        _amountPaid = 0.0;
+        _amountController.text = '';
+      });
+    } else {
+      // For credit/debit cards, process immediately
+      await _processCardPayment(method);
+    }
+  }
+
+  Future<void> _processCardPayment(PaymentMethod method) async {
+    setState(() {
+      _isProcessingPayment = true;
+    });
+
+    try {
+      // Update the order with payment information
+      final updatedOrder = _currentOrder.copyWith(
+        status: ServiceOrderStatus.completed,
+        completedAt: DateTime.now(),
+        paymentMethod: method.name,
+        isPaid: true,
+        paidAt: DateTime.now(),
+      );
+
+      await FirebaseService.saveServiceOrder(updatedOrder);
+
+      // Award loyalty points if customer is selected
+      if (_selectedCustomer != null && _loyaltyPointsToEarn > 0) {
+        final finalOrder = updatedOrder.copyWith(
+          loyaltyPointsEarned: _loyaltyPointsToEarn,
+        );
+        await FirebaseService.saveServiceOrder(finalOrder);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Payment completed with ${method.name}'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.of(context).pop(); // Return to dashboard
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Payment failed: $e')));
+      }
+    } finally {
+      setState(() {
+        _isProcessingPayment = false;
+      });
+    }
   }
 
   @override
@@ -852,21 +919,99 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
 
                     const SizedBox(height: 16),
 
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: _orderItems.isNotEmpty
-                            ? _proceedToCheckout
-                            : null,
-                        icon: const Icon(Icons.payment),
-                        label: const Text('Proceed to Checkout'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
+                    // Payment Method Selection
+                    if (!_showPaymentOptions && !_showCashCheckout) ...[
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _orderItems.isNotEmpty
+                              ? () => setState(() => _showPaymentOptions = true)
+                              : null,
+                          icon: const Icon(Icons.payment),
+                          label: const Text('Pay Now'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
                         ),
                       ),
-                    ),
+                    ] else if (_showPaymentOptions && !_showCashCheckout) ...[
+                      // Payment Method Buttons
+                      Column(
+                        children: [
+                          const Text(
+                            'Choose Payment Method:',
+                            style: TextStyle(
+                              fontSize: 16,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () =>
+                                      _selectPaymentMethod(PaymentMethod.cash),
+                                  icon: const Icon(Icons.payments),
+                                  label: const Text('Cash'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.green.shade600,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton.icon(
+                                  onPressed: () => _selectPaymentMethod(
+                                    PaymentMethod.credit,
+                                  ),
+                                  icon: const Icon(Icons.credit_card),
+                                  label: const Text('Credit Card'),
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: Colors.blue.shade600,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(
+                                      vertical: 16,
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          SizedBox(
+                            width: double.infinity,
+                            child: ElevatedButton.icon(
+                              onPressed: () =>
+                                  _selectPaymentMethod(PaymentMethod.debit),
+                              icon: const Icon(Icons.credit_card),
+                              label: const Text('Debit Card'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.purple.shade600,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 16,
+                                ),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 12),
+                          TextButton(
+                            onPressed: () =>
+                                setState(() => _showPaymentOptions = false),
+                            child: const Text('Cancel'),
+                          ),
+                        ],
+                      ),
+                    ] else if (_showCashCheckout) ...[
+                      _buildCashCheckoutSection(),
+                    ],
                   ],
                 ),
               ),
@@ -1555,6 +1700,817 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
       ),
     );
   }
+
+  // Cash checkout methods
+  Widget _buildCashCheckoutSection() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.blue.shade50,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue.shade200, width: 2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Row(
+            children: [
+              const Icon(Icons.payments, color: Colors.green),
+              const SizedBox(width: 8),
+              const Text(
+                'Cash Payment',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              IconButton(
+                onPressed: () {
+                  setState(() {
+                    _showCashCheckout = false;
+                    _showPaymentOptions = false;
+                    _amountPaid = 0.0;
+                    _amountController.clear();
+                  });
+                },
+                icon: const Icon(Icons.close),
+                tooltip: 'Cancel Payment',
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+
+          // Order Summary (Compact)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _totalPaidSoFar > 0 ? 'Remaining:' : 'Total Due:',
+                      style: const TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      '\$${_remainingBalance.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 20,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+                if (_totalPaidSoFar > 0) ...[
+                  const SizedBox(height: 4),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Already Paid: \$${_totalPaidSoFar.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.green.shade600,
+                        ),
+                      ),
+                      Text(
+                        'Total: \$${_total.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Partial Payments History
+          if (_partialPayments.isNotEmpty) ...[
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.payments,
+                        color: Colors.green.shade600,
+                        size: 18,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Partial Payments Made',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ...List.generate(_partialPayments.length, (index) {
+                    final payment = _partialPayments[index];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 4),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(6),
+                        border: Border.all(color: Colors.green.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Payment ${index + 1}:',
+                            style: const TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Text(
+                            '\$${payment.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () => _removePartialPayment(index),
+                            icon: Icon(
+                              Icons.close,
+                              size: 16,
+                              color: Colors.red.shade600,
+                            ),
+                            constraints: const BoxConstraints(
+                              minWidth: 24,
+                              minHeight: 24,
+                            ),
+                            padding: EdgeInsets.zero,
+                            tooltip: 'Remove payment',
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 8),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade100,
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        const Text(
+                          'Total Paid So Far:',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        Text(
+                          '\$${_totalPaidSoFar.toStringAsFixed(2)}',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton.icon(
+                      onPressed: _clearAllPartialPayments,
+                      icon: const Icon(Icons.clear_all, size: 16),
+                      label: const Text(
+                        'Clear All Payments',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.red.shade100,
+                        foregroundColor: Colors.red.shade700,
+                        elevation: 0,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+          ],
+
+          // Exact Amount Button
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.green.shade200),
+            ),
+            child: SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: () => _setAmount(_remainingBalance),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green.shade100,
+                  foregroundColor: Colors.green.shade700,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: Text(
+                  _totalPaidSoFar > 0
+                      ? 'Pay Remaining (\$${_remainingBalance.toStringAsFixed(2)})'
+                      : 'Pay Exact Amount (\$${_total.toStringAsFixed(2)})',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Cash Input with Live Display
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.blue.shade300, width: 2),
+            ),
+            child: Column(
+              children: [
+                // Live Cash Amount Display
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade300, width: 2),
+                  ),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Cash Tendered',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                          color: Colors.grey,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '\$${_amountPaid.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.blue.shade700,
+                        ),
+                      ),
+                      if (_amountPaid >= _remainingBalance &&
+                          _amountPaid > 0) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.green.shade100,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            'Change: \$${_changeAmount.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                        ),
+                      ] else if (_amountPaid > 0 &&
+                          _amountPaid < _remainingBalance) ...[
+                        const SizedBox(height: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          decoration: BoxDecoration(
+                            color: Colors.orange.shade100,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Text(
+                            'Need: \$${(_remainingBalance - _amountPaid).toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.orange.shade700,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+
+                // On-Screen Keypad
+                const Text(
+                  'Enter Amount',
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 12),
+
+                // Number pad grid
+                _buildNumPad(),
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
+
+          // Action Buttons
+          Row(
+            children: [
+              if (_amountPaid > 0 && _amountPaid < _remainingBalance) ...[
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: _isProcessingPayment
+                        ? null
+                        : () => _addPartialPayment(_amountPaid),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade600,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                    ),
+                    child: Text(
+                      'Add Partial Payment (\$${_amountPaid.toStringAsFixed(2)})',
+                      style: const TextStyle(color: Colors.white),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+              ],
+              Expanded(
+                child: ElevatedButton(
+                  onPressed:
+                      _isProcessingPayment ||
+                          (_amountPaid <= 0 ||
+                              (_amountPaid < _remainingBalance &&
+                                  !_isOrderFullyPaid))
+                      ? null
+                      : _processCashPayment,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade600,
+                    padding: const EdgeInsets.symmetric(vertical: 16),
+                  ),
+                  child: _isProcessingPayment
+                      ? const SizedBox(
+                          width: 16,
+                          height: 16,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : Text(
+                          _isOrderFullyPaid
+                              ? 'Complete Order'
+                              : 'Complete Payment',
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Add the remaining cash payment helper methods
+  void _setAmount(double amount) {
+    setState(() {
+      _amountPaid = amount;
+      _amountController.text = amount.toStringAsFixed(2);
+    });
+  }
+
+  Widget _buildNumPad() {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: _buildSimpleNumButton('1')),
+            const SizedBox(width: 8),
+            Expanded(child: _buildSimpleNumButton('2')),
+            const SizedBox(width: 8),
+            Expanded(child: _buildSimpleNumButton('3')),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: _buildSimpleNumButton('4')),
+            const SizedBox(width: 8),
+            Expanded(child: _buildSimpleNumButton('5')),
+            const SizedBox(width: 8),
+            Expanded(child: _buildSimpleNumButton('6')),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: _buildSimpleNumButton('7')),
+            const SizedBox(width: 8),
+            Expanded(child: _buildSimpleNumButton('8')),
+            const SizedBox(width: 8),
+            Expanded(child: _buildSimpleNumButton('9')),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Row(
+          children: [
+            Expanded(child: _buildSimpleNumButton('0')),
+            const SizedBox(width: 8),
+            Expanded(child: _buildSimpleNumButton('.')),
+            const SizedBox(width: 8),
+            Expanded(
+              child: SizedBox(
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _amountController.text.isNotEmpty
+                      ? _backspaceAmount
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _amountController.text.isNotEmpty
+                        ? Colors.red.shade100
+                        : Colors.grey.shade200,
+                    foregroundColor: _amountController.text.isNotEmpty
+                        ? Colors.red.shade700
+                        : Colors.grey.shade500,
+                    elevation: _amountController.text.isNotEmpty ? 2 : 0,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8),
+                      side: BorderSide(
+                        color: _amountController.text.isNotEmpty
+                            ? Colors.red.shade300
+                            : Colors.grey.shade400,
+                      ),
+                    ),
+                  ),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.backspace_outlined,
+                        size: 18,
+                        color: _amountController.text.isNotEmpty
+                            ? Colors.red.shade700
+                            : Colors.grey.shade500,
+                      ),
+                      Text(
+                        'DEL',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: _amountController.text.isNotEmpty
+                              ? Colors.red.shade700
+                              : Colors.grey.shade500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        SizedBox(
+          width: double.infinity,
+          child: ElevatedButton(
+            onPressed: _amountPaid > 0 ? _clearAmount : null,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _amountPaid > 0
+                  ? Colors.orange.shade100
+                  : Colors.grey.shade200,
+              foregroundColor: _amountPaid > 0
+                  ? Colors.orange.shade700
+                  : Colors.grey.shade500,
+              padding: const EdgeInsets.symmetric(vertical: 12),
+            ),
+            child: const Text(
+              'Clear All',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildSimpleNumButton(String value) {
+    return SizedBox(
+      height: 50,
+      child: ElevatedButton(
+        onPressed: () => _addToAmount(value),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black87,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        child: Text(
+          value,
+          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  void _addToAmount(String digit) {
+    String currentText = _amountController.text;
+
+    // Handle decimal point
+    if (digit == '.') {
+      if (currentText.contains('.')) return; // Already has decimal
+      if (currentText.isEmpty) currentText = '0';
+    }
+
+    // Prevent multiple leading zeros
+    if (digit == '0' && currentText == '0') return;
+    if (currentText == '0' && digit != '.') currentText = '';
+
+    String newText = currentText + digit;
+    double newAmount = double.tryParse(newText) ?? 0.0;
+
+    // Limit to reasonable amount (max $9999.99)
+    if (newAmount > 9999.99) return;
+
+    setState(() {
+      _amountPaid = newAmount;
+      _amountController.text = newText;
+    });
+  }
+
+  void _backspaceAmount() {
+    String currentText = _amountController.text;
+    if (currentText.isNotEmpty) {
+      String newText = currentText.substring(0, currentText.length - 1);
+      if (newText.isEmpty) newText = '0';
+
+      setState(() {
+        _amountPaid = double.tryParse(newText) ?? 0.0;
+        _amountController.text = newText == '0' ? '' : newText;
+      });
+    }
+  }
+
+  void _clearAmount() {
+    setState(() {
+      _amountPaid = 0.0;
+      _amountController.text = '';
+    });
+  }
+
+  void _addPartialPayment(double amount) {
+    setState(() {
+      _partialPayments.add(amount);
+      _totalPaidSoFar += amount;
+      _amountPaid = 0.0;
+      _amountController.clear();
+    });
+  }
+
+  void _removePartialPayment(int index) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Payment'),
+        content: Text(
+          'Are you sure you want to remove this payment of \$${_partialPayments[index].toStringAsFixed(2)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _totalPaidSoFar -= _partialPayments[index];
+                _partialPayments.removeAt(index);
+              });
+              Navigator.of(context).pop();
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _clearAllPartialPayments() {
+    if (_partialPayments.isEmpty) return;
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All Payments'),
+        content: Text(
+          'Are you sure you want to remove all ${_partialPayments.length} partial payments totaling \$${_totalPaidSoFar.toStringAsFixed(2)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _totalPaidSoFar = 0.0;
+                _partialPayments.clear();
+              });
+              Navigator.of(context).pop();
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Clear All'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<bool?> _showChangeConfirmationDialog(double changeAmount) {
+    return showDialog<bool>(
+      context: context,
+      barrierDismissible: false, // User must confirm or cancel
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.attach_money, color: Colors.green.shade600, size: 28),
+            const SizedBox(width: 8),
+            const Text('Change Required'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'The customer has overpaid. Please give them their change:',
+              style: TextStyle(fontSize: 16),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                border: Border.all(color: Colors.green.shade200),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(
+                    Icons.monetization_on,
+                    color: Colors.green.shade700,
+                    size: 32,
+                  ),
+                  const SizedBox(width: 12),
+                  Text(
+                    '\$${changeAmount.toStringAsFixed(2)}',
+                    style: TextStyle(
+                      fontSize: 28,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green.shade700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'Have you given the customer their change?',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel Payment'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Yes, Change Given'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _processCashPayment() async {
+    setState(() {
+      _isProcessingPayment = true;
+    });
+
+    try {
+      // Check if there's change to be given
+      double changeAmount = _changeAmount;
+      if (changeAmount > 0) {
+        // Show change confirmation dialog
+        bool? changeGiven = await _showChangeConfirmationDialog(changeAmount);
+        if (changeGiven != true) {
+          setState(() {
+            _isProcessingPayment = false;
+          });
+          return; // User cancelled or didn't confirm change was given
+        }
+      }
+
+      // Update the order with payment information
+      final updatedOrder = _currentOrder.copyWith(
+        status: ServiceOrderStatus.completed,
+        completedAt: DateTime.now(),
+        paymentMethod: PaymentMethod.cash.name,
+        isPaid: true,
+        paidAt: DateTime.now(),
+      );
+
+      await FirebaseService.saveServiceOrder(updatedOrder);
+
+      // Award loyalty points if customer is selected
+      if (_selectedCustomer != null && _loyaltyPointsToEarn > 0) {
+        final finalOrder = updatedOrder.copyWith(
+          loyaltyPointsEarned: _loyaltyPointsToEarn,
+        );
+        await FirebaseService.saveServiceOrder(finalOrder);
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Cash payment completed successfully'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.of(context).pop(); // Return to dashboard
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Payment failed: $e')));
+      }
+    } finally {
+      setState(() {
+        _isProcessingPayment = false;
+      });
+    }
+  }
 }
 
 // Dialog classes would be added here but I'll need the checkout dialog content
@@ -1674,767 +2630,5 @@ class _TechnicianSelectionDialogState
         ),
       ],
     );
-  }
-}
-
-// Placeholder for checkout dialog - would need complete implementation
-class _CheckoutDialog extends StatefulWidget {
-  final ServiceOrder currentOrder;
-  final List<ServiceOrderItem> orderItems;
-  final Customer? selectedCustomer;
-  final int loyaltyPointsToEarn;
-  final VoidCallback onPaymentComplete;
-
-  const _CheckoutDialog({
-    required this.currentOrder,
-    required this.orderItems,
-    required this.selectedCustomer,
-    required this.loyaltyPointsToEarn,
-    required this.onPaymentComplete,
-  });
-
-  @override
-  State<_CheckoutDialog> createState() => _CheckoutDialogState();
-}
-
-class _CheckoutDialogState extends State<_CheckoutDialog> {
-  PaymentMethod _selectedPaymentMethod = PaymentMethod.cash;
-  double _amountPaid = 0.0;
-  double _totalPaidSoFar = 0.0;
-  List<double> _partialPayments = [];
-  bool _isProcessingPayment = false;
-  final TextEditingController _amountController = TextEditingController();
-
-  @override
-  void initState() {
-    super.initState();
-    // Start with zero by default
-    _amountPaid = 0.0;
-    _amountController.text = '';
-  }
-
-  @override
-  void dispose() {
-    _amountController.dispose();
-    super.dispose();
-  }
-
-  double get _remainingBalance {
-    return widget.currentOrder.total - _totalPaidSoFar;
-  }
-
-  double get _changeAmount {
-    return _amountPaid - _remainingBalance;
-  }
-
-  // Partial payment methods
-  void _addPartialPayment(double amount) {
-    setState(() {
-      _partialPayments.add(amount);
-      _totalPaidSoFar += amount;
-      _amountPaid = 0.0;
-      _amountController.clear();
-    });
-  }
-
-  bool get _isOrderFullyPaid {
-    return _totalPaidSoFar >= widget.currentOrder.total;
-  }
-
-  void _resetPartialPayments() {
-    setState(() {
-      _partialPayments.clear();
-      _totalPaidSoFar = 0.0;
-      _amountPaid = 0.0;
-      _amountController.clear();
-    });
-  }
-
-  // Numpad helper methods
-
-  Widget _buildSimpleNumButton(String value) {
-    return SizedBox(
-      height: 50,
-      child: ElevatedButton(
-        onPressed: () => _addToAmount(value),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black87,
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(color: Colors.grey.shade300),
-          ),
-        ),
-        child: Text(
-          value,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-      ),
-    );
-  }
-
-  void _setAmount(double amount) {
-    setState(() {
-      _amountPaid = amount;
-      _amountController.text = amount.toStringAsFixed(2);
-    });
-  }
-
-  void _addToAmount(String digit) {
-    String currentText = _amountController.text;
-
-    // Handle decimal point
-    if (digit == '.') {
-      if (currentText.contains('.')) return; // Already has decimal
-      if (currentText.isEmpty) currentText = '0';
-    }
-
-    // Prevent multiple leading zeros
-    if (digit == '0' && currentText == '0') return;
-    if (currentText == '0' && digit != '.') currentText = '';
-
-    String newText = currentText + digit;
-    double newAmount = double.tryParse(newText) ?? 0.0;
-
-    // Limit to reasonable amount (max $9999.99)
-    if (newAmount > 9999.99) return;
-
-    setState(() {
-      _amountPaid = newAmount;
-      _amountController.text = newText;
-    });
-  }
-
-  void _backspaceAmount() {
-    String currentText = _amountController.text;
-    if (currentText.isNotEmpty) {
-      String newText = currentText.substring(0, currentText.length - 1);
-      if (newText.isEmpty) newText = '0';
-
-      setState(() {
-        _amountPaid = double.tryParse(newText) ?? 0.0;
-        _amountController.text = newText == '0' ? '' : newText;
-      });
-    }
-  }
-
-  void _clearAmount() {
-    setState(() {
-      _amountPaid = 0.0;
-      _amountController.text = '';
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: const Text('Checkout'),
-      content: SizedBox(
-        width: double.maxFinite,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Order Summary
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.grey.shade100,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Order #${widget.currentOrder.orderNumber}',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Total Amount:'),
-                      Text(
-                        '\$${widget.currentOrder.total.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green,
-                        ),
-                      ),
-                    ],
-                  ),
-                  if (widget.selectedCustomer != null) ...[
-                    const SizedBox(height: 4),
-                    Text('Customer: ${widget.selectedCustomer!.fullName}'),
-                  ],
-                  if (widget.loyaltyPointsToEarn > 0) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      'Points to Earn: ${widget.loyaltyPointsToEarn}',
-                      style: TextStyle(
-                        color: Colors.blue.shade600,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-
-            // Payment Method Selection
-            const Text(
-              'Payment Method:',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-            ),
-            const SizedBox(height: 8),
-            Column(
-              children: PaymentMethod.values.map((method) {
-                IconData icon;
-                String label;
-                Color color;
-
-                switch (method) {
-                  case PaymentMethod.cash:
-                    icon = Icons.money;
-                    label = 'Cash';
-                    color = Colors.green;
-                    break;
-                  case PaymentMethod.credit:
-                    icon = Icons.credit_card;
-                    label = 'Credit Card';
-                    color = Colors.blue;
-                    break;
-                  case PaymentMethod.debit:
-                    icon = Icons.payment;
-                    label = 'Debit Card';
-                    color = Colors.orange;
-                    break;
-                }
-
-                return RadioListTile<PaymentMethod>(
-                  title: Row(
-                    children: [
-                      Icon(icon, color: color, size: 20),
-                      const SizedBox(width: 8),
-                      Text(label),
-                    ],
-                  ),
-                  value: method,
-                  groupValue: _selectedPaymentMethod,
-                  onChanged: (PaymentMethod? value) {
-                    setState(() {
-                      _selectedPaymentMethod = value!;
-                    });
-                  },
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 16),
-
-            // Cash Tender Section (only for cash)
-            if (_selectedPaymentMethod == PaymentMethod.cash) ...[
-              const Text(
-                'Cash Payment:',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-              ),
-              const SizedBox(height: 12),
-
-              // Order Summary (Compact)
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.grey.shade300),
-                ),
-                child: Column(
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          _totalPaidSoFar > 0 ? 'Remaining:' : 'Total Due:',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '\$${_remainingBalance.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 20,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.orange.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_totalPaidSoFar > 0) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Already Paid: \$${_totalPaidSoFar.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.green.shade600,
-                            ),
-                          ),
-                          Text(
-                            'Total: \$${widget.currentOrder.total.toStringAsFixed(2)}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Exact Amount Button
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.shade200),
-                ),
-                child: SizedBox(
-                  width: double.infinity,
-                  child: ElevatedButton(
-                    onPressed: () => _setAmount(_remainingBalance),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.green.shade100,
-                      foregroundColor: Colors.green.shade700,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                    child: Text(
-                      _totalPaidSoFar > 0
-                          ? 'Pay Remaining (\$${_remainingBalance.toStringAsFixed(2)})'
-                          : 'Pay Exact Amount (\$${widget.currentOrder.total.toStringAsFixed(2)})',
-                      style: const TextStyle(fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ),
-              const SizedBox(height: 16),
-
-              // Cash Input with Live Display
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.blue.shade200, width: 2),
-                ),
-                child: Column(
-                  children: [
-                    // Live Cash Amount Display (Prominent)
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(20),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                          color: Colors.blue.shade300,
-                          width: 2,
-                        ),
-                      ),
-                      child: Column(
-                        children: [
-                          const Text(
-                            'Cash Tendered',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                              color: Colors.grey,
-                            ),
-                          ),
-                          const SizedBox(height: 8),
-                          Text(
-                            '\$${_amountPaid.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 32,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.blue.shade700,
-                            ),
-                          ),
-                          if (_amountPaid >= _remainingBalance &&
-                              _amountPaid > 0) ...[
-                            const SizedBox(height: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.green.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                'Change: \$${_changeAmount.toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.green.shade700,
-                                ),
-                              ),
-                            ),
-                          ] else if (_amountPaid > 0 &&
-                              _amountPaid < _remainingBalance) ...[
-                            const SizedBox(height: 8),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 12,
-                                vertical: 4,
-                              ),
-                              decoration: BoxDecoration(
-                                color: Colors.orange.shade100,
-                                borderRadius: BorderRadius.circular(20),
-                              ),
-                              child: Text(
-                                'Need: \$${(_remainingBalance - _amountPaid).toStringAsFixed(2)}',
-                                style: TextStyle(
-                                  fontSize: 14,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.orange.shade700,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // On-Screen Keypad
-                    const Text(
-                      'Enter Amount',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.grey,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Number pad grid
-                    Column(
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(child: _buildSimpleNumButton('1')),
-                            const SizedBox(width: 8),
-                            Expanded(child: _buildSimpleNumButton('2')),
-                            const SizedBox(width: 8),
-                            Expanded(child: _buildSimpleNumButton('3')),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(child: _buildSimpleNumButton('4')),
-                            const SizedBox(width: 8),
-                            Expanded(child: _buildSimpleNumButton('5')),
-                            const SizedBox(width: 8),
-                            Expanded(child: _buildSimpleNumButton('6')),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(child: _buildSimpleNumButton('7')),
-                            const SizedBox(width: 8),
-                            Expanded(child: _buildSimpleNumButton('8')),
-                            const SizedBox(width: 8),
-                            Expanded(child: _buildSimpleNumButton('9')),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        Row(
-                          children: [
-                            Expanded(child: _buildSimpleNumButton('0')),
-                            const SizedBox(width: 8),
-                            Expanded(child: _buildSimpleNumButton('.')),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: SizedBox(
-                                height: 50,
-                                child: ElevatedButton(
-                                  onPressed: _amountController.text.isNotEmpty
-                                      ? _backspaceAmount
-                                      : null,
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor:
-                                        _amountController.text.isNotEmpty
-                                        ? Colors.red.shade100
-                                        : Colors.grey.shade200,
-                                    foregroundColor:
-                                        _amountController.text.isNotEmpty
-                                        ? Colors.red.shade700
-                                        : Colors.grey.shade500,
-                                    elevation: _amountController.text.isNotEmpty
-                                        ? 2
-                                        : 0,
-                                    shape: RoundedRectangleBorder(
-                                      borderRadius: BorderRadius.circular(8),
-                                      side: BorderSide(
-                                        color: _amountController.text.isNotEmpty
-                                            ? Colors.red.shade300
-                                            : Colors.grey.shade400,
-                                      ),
-                                    ),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        Icons.backspace_outlined,
-                                        size: 18,
-                                        color: _amountController.text.isNotEmpty
-                                            ? Colors.red.shade700
-                                            : Colors.grey.shade500,
-                                      ),
-                                      Text(
-                                        'DEL',
-                                        style: TextStyle(
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.bold,
-                                          color:
-                                              _amountController.text.isNotEmpty
-                                              ? Colors.red.shade700
-                                              : Colors.grey.shade500,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 12),
-
-                    // Clear All button
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton(
-                        onPressed: _amountPaid > 0 ? _clearAmount : null,
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _amountPaid > 0
-                              ? Colors.orange.shade100
-                              : Colors.grey.shade200,
-                          foregroundColor: _amountPaid > 0
-                              ? Colors.orange.shade700
-                              : Colors.grey.shade500,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
-                        child: const Text(
-                          'Clear All',
-                          style: TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: _isProcessingPayment
-              ? null
-              : () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        if (_partialPayments.isNotEmpty)
-          TextButton(
-            onPressed: _isProcessingPayment ? null : _resetPartialPayments,
-            child: const Text('Reset'),
-          ),
-        if (_selectedPaymentMethod == PaymentMethod.cash &&
-            _amountPaid > 0 &&
-            _amountPaid < _remainingBalance &&
-            !_isOrderFullyPaid)
-          ElevatedButton(
-            onPressed: _isProcessingPayment
-                ? null
-                : () => _addPartialPayment(_amountPaid),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.orange.shade600,
-            ),
-            child: Text(
-              'Add Partial Payment (\$${_amountPaid.toStringAsFixed(2)})',
-            ),
-          ),
-        ElevatedButton(
-          onPressed:
-              _isProcessingPayment ||
-                  (_selectedPaymentMethod == PaymentMethod.cash &&
-                      (_amountPaid <= 0 ||
-                          (_amountPaid < _remainingBalance &&
-                              !_isOrderFullyPaid)))
-              ? null
-              : _processPayment,
-          child: _isProcessingPayment
-              ? const SizedBox(
-                  width: 16,
-                  height: 16,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : Text(_isOrderFullyPaid ? 'Complete Order' : 'Complete Payment'),
-        ),
-      ],
-    );
-  }
-
-  Future<void> _processPayment() async {
-    setState(() {
-      _isProcessingPayment = true;
-    });
-
-    try {
-      // Update the order with payment information
-      final updatedOrder = widget.currentOrder.copyWith(
-        status: ServiceOrderStatus.completed,
-        completedAt: DateTime.now(),
-        paymentMethod: _selectedPaymentMethod.name,
-        isPaid: true,
-        paidAt: DateTime.now(),
-      );
-
-      // Save to Firebase
-      await FirebaseService.saveServiceOrder(updatedOrder);
-
-      // Award loyalty points if customer is selected
-      if (widget.selectedCustomer != null && widget.loyaltyPointsToEarn > 0) {
-        // Update the order with loyalty points earned
-        final finalOrder = updatedOrder.copyWith(
-          loyaltyPointsEarned: widget.loyaltyPointsToEarn,
-        );
-        await FirebaseService.saveServiceOrder(finalOrder);
-
-        // TODO: Implement customer loyalty points update in FirebaseService
-        // This would update the customer's loyaltyPoints field
-      }
-
-      // Show success message with change due dialog for cash payments
-      if (mounted) {
-        if (_selectedPaymentMethod == PaymentMethod.cash && _changeAmount > 0) {
-          // Show prominent change due dialog
-          showDialog(
-            context: context,
-            barrierDismissible: false,
-            builder: (context) => AlertDialog(
-              title: const Row(
-                children: [
-                  Icon(Icons.monetization_on, color: Colors.green, size: 32),
-                  SizedBox(width: 8),
-                  Text('Change Due'),
-                ],
-              ),
-              content: Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.green.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.green.shade200, width: 2),
-                ),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      'Give back to customer:',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.green.shade800,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '\$${_changeAmount.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 36,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              actions: [
-                ElevatedButton(
-                  onPressed: () {
-                    Navigator.of(context).pop(); // Close change dialog
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                        content: Text('Payment completed successfully!'),
-                        backgroundColor: Colors.green,
-                        duration: Duration(seconds: 2),
-                      ),
-                    );
-                    widget.onPaymentComplete();
-                  },
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green,
-                    foregroundColor: Colors.white,
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 24,
-                      vertical: 12,
-                    ),
-                  ),
-                  child: const Text('Change Given'),
-                ),
-              ],
-            ),
-          );
-        } else {
-          // Regular success message for non-cash or exact payments
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                _selectedPaymentMethod == PaymentMethod.cash
-                    ? 'Payment completed successfully! (Exact amount)'
-                    : 'Payment completed successfully!',
-              ),
-              backgroundColor: Colors.green,
-              duration: const Duration(seconds: 2),
-            ),
-          );
-          widget.onPaymentComplete();
-        }
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Payment failed: $e'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isProcessingPayment = false;
-        });
-      }
-    }
   }
 }
