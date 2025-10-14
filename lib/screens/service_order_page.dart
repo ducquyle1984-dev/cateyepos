@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/service_order.dart';
 import '../models/service_order_item.dart';
 import '../models/service_catalog.dart';
+import '../models/category.dart';
 import '../models/employee.dart';
 import '../models/customer.dart';
 import '../services/firebase_service.dart';
@@ -20,11 +21,14 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   late ServiceOrder _currentOrder;
   List<ServiceOrderItem> _orderItems = [];
   List<ServiceCatalog> _availableServices = [];
+  List<ServiceCatalog> _filteredServices = [];
+  List<Category> _categories = [];
   List<Employee> _availableEmployees = [];
   List<Customer> _customers = [];
   bool _isLoading = true;
   bool _isSaving = false;
   Customer? _selectedCustomer;
+  String? _selectedCategoryId;
 
   @override
   void initState() {
@@ -47,6 +51,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     try {
       final futures = await Future.wait([
         FirebaseService.getServices(),
+        FirebaseService.getCategories(),
         FirebaseService.getEmployees(),
         FirebaseService.getCustomers(),
         if (widget.existingOrder != null)
@@ -55,11 +60,15 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
 
       setState(() {
         _availableServices = futures[0] as List<ServiceCatalog>;
-        _availableEmployees = futures[1] as List<Employee>;
-        _customers = futures[2] as List<Customer>;
-        if (futures.length > 3) {
-          _orderItems = futures[3] as List<ServiceOrderItem>;
+        _categories = futures[1] as List<Category>;
+        _availableEmployees = futures[2] as List<Employee>;
+        _customers = futures[3] as List<Customer>;
+        if (futures.length > 4) {
+          _orderItems = futures[4] as List<ServiceOrderItem>;
         }
+
+        // Initialize filtered services
+        _filteredServices = _availableServices;
 
         // Set selected customer if order has one
         if (_currentOrder.customerId != null) {
@@ -81,6 +90,19 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
         ).showSnackBar(SnackBar(content: Text('Error loading data: $e')));
       }
     }
+  }
+
+  void _filterServicesByCategory(String? categoryId) {
+    setState(() {
+      _selectedCategoryId = categoryId;
+      if (categoryId == null) {
+        _filteredServices = _availableServices;
+      } else {
+        _filteredServices = _availableServices
+            .where((service) => service.categoryId == categoryId)
+            .toList();
+      }
+    });
   }
 
   double get _subtotal {
@@ -152,13 +174,13 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     }
   }
 
-  void _addServiceItem() {
+  void _addServiceWithTechnician(ServiceCatalog service) {
     showDialog(
       context: context,
-      builder: (context) => _AddServiceItemDialog(
-        availableServices: _availableServices,
+      builder: (context) => _TechnicianSelectionDialog(
+        service: service,
         availableEmployees: _availableEmployees,
-        onAdd: (service, employee, quantity) {
+        onAdd: (employee, quantity) {
           setState(() {
             final item = ServiceOrderItem(
               serviceOrderId: _currentOrder.id ?? '',
@@ -219,6 +241,171 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     }
   }
 
+  Widget _buildServiceCard(ServiceCatalog service) {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      child: InkWell(
+        onTap: () => _addServiceWithTechnician(service),
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade100,
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.content_cut,
+                      color: Colors.blue.shade700,
+                      size: 16,
+                    ),
+                  ),
+                  const Spacer(),
+                  Text(
+                    '\$${service.price.toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Text(
+                service.name,
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 4),
+              if (service.description.isNotEmpty)
+                Text(
+                  service.description,
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade600),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              const Spacer(),
+              Row(
+                children: [
+                  Icon(
+                    Icons.access_time,
+                    size: 12,
+                    color: Colors.grey.shade600,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${service.durationMinutes} min',
+                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildReceiptItem(ServiceOrderItem item, int index) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  item.serviceName,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 14,
+                  ),
+                ),
+              ),
+              IconButton(
+                onPressed: () => _removeServiceItem(index),
+                icon: const Icon(Icons.close, size: 18, color: Colors.red),
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(),
+              ),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Icon(Icons.person, size: 14, color: Colors.grey.shade600),
+              const SizedBox(width: 4),
+              Text(
+                item.technicianName,
+                style: TextStyle(fontSize: 12, color: Colors.grey.shade600),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Row(
+                children: [
+                  IconButton(
+                    onPressed: () =>
+                        _updateItemQuantity(index, item.quantity - 1),
+                    icon: const Icon(Icons.remove_circle_outline),
+                    iconSize: 20,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(
+                      item.quantity.toString(),
+                      style: const TextStyle(fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () =>
+                        _updateItemQuantity(index, item.quantity + 1),
+                    icon: const Icon(Icons.add_circle_outline),
+                    iconSize: 20,
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints(),
+                  ),
+                ],
+              ),
+              Text(
+                '\$${item.lineTotal.toStringAsFixed(2)}',
+                style: const TextStyle(
+                  fontWeight: FontWeight.bold,
+                  fontSize: 16,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_isLoading) {
@@ -262,307 +449,295 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
             ),
         ],
       ),
-      body: Column(
+      body: Row(
         children: [
-          // Order Header
-          Container(
-            padding: const EdgeInsets.all(16.0),
-            color: Colors.grey.shade100,
+          // Left side - Service Selection
+          Expanded(
+            flex: 2,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
+                // Order Header
+                Container(
+                  padding: const EdgeInsets.all(16.0),
+                  color: Colors.grey.shade100,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          Text(
-                            'Order: ${_currentOrder.orderNumber}',
-                            style: const TextStyle(
-                              fontSize: 18,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          Text(
-                            'Status: ${_currentOrder.status.displayName}',
-                            style: TextStyle(
-                              color: _getStatusColor(_currentOrder.status),
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          Text(
-                            'Created: ${_formatDate(_currentOrder.createdAt)}',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey,
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  'Order: ${_currentOrder.orderNumber}',
+                                  style: const TextStyle(
+                                    fontSize: 18,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                                Text(
+                                  'Status: ${_currentOrder.status.displayName}',
+                                  style: TextStyle(
+                                    color: _getStatusColor(
+                                      _currentOrder.status,
+                                    ),
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
+                      const SizedBox(height: 16),
+                      // Customer Selection
+                      Row(
+                        children: [
+                          const Text(
+                            'Customer: ',
+                            style: TextStyle(fontWeight: FontWeight.w500),
+                          ),
+                          Expanded(
+                            child: DropdownButton<Customer?>(
+                              value: _selectedCustomer,
+                              hint: const Text('Select Customer (Optional)'),
+                              isExpanded: true,
+                              items: [
+                                const DropdownMenuItem<Customer?>(
+                                  value: null,
+                                  child: Text('Walk-in Customer'),
+                                ),
+                                ..._customers.map(
+                                  (customer) => DropdownMenuItem<Customer?>(
+                                    value: customer,
+                                    child: Text(customer.displayName),
+                                  ),
+                                ),
+                              ],
+                              onChanged: (customer) {
+                                setState(() {
+                                  _selectedCustomer = customer;
+                                });
+                              },
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+
+                // Service Selection Cards
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          'Total: \$${_total.toStringAsFixed(2)}',
-                          style: const TextStyle(
+                        const Text(
+                          'Select Services',
+                          style: TextStyle(
                             fontSize: 20,
                             fontWeight: FontWeight.bold,
-                            color: Colors.green,
                           ),
                         ),
-                        Text(
-                          '${_orderItems.length} items',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            color: Colors.grey,
+                        const SizedBox(height: 16),
+
+                        // Category Filter Chips
+                        if (_categories.isNotEmpty)
+                          SizedBox(
+                            height: 40,
+                            child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              children: [
+                                FilterChip(
+                                  label: const Text('All'),
+                                  selected: _selectedCategoryId == null,
+                                  onSelected: (selected) {
+                                    if (selected)
+                                      _filterServicesByCategory(null);
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                ..._categories.map((category) {
+                                  return Padding(
+                                    padding: const EdgeInsets.only(right: 8.0),
+                                    child: FilterChip(
+                                      label: Text(category.name),
+                                      selected:
+                                          _selectedCategoryId == category.id,
+                                      onSelected: (selected) {
+                                        if (selected) {
+                                          _filterServicesByCategory(
+                                            category.id,
+                                          );
+                                        }
+                                      },
+                                    ),
+                                  );
+                                }).toList(),
+                              ],
+                            ),
+                          ),
+                        const SizedBox(height: 16),
+
+                        Expanded(
+                          child: GridView.builder(
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 3,
+                                  crossAxisSpacing: 8,
+                                  mainAxisSpacing: 8,
+                                  childAspectRatio: 1.2,
+                                ),
+                            itemCount: _filteredServices.length,
+                            itemBuilder: (context, index) {
+                              final service = _filteredServices[index];
+                              return _buildServiceCard(service);
+                            },
                           ),
                         ),
                       ],
                     ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                // Customer Selection
-                Row(
-                  children: [
-                    const Text(
-                      'Customer: ',
-                      style: TextStyle(fontWeight: FontWeight.w500),
-                    ),
-                    Expanded(
-                      child: DropdownButton<Customer?>(
-                        value: _selectedCustomer,
-                        hint: const Text('Select Customer (Optional)'),
-                        isExpanded: true,
-                        items: [
-                          const DropdownMenuItem<Customer?>(
-                            value: null,
-                            child: Text('Walk-in Customer'),
-                          ),
-                          ..._customers.map(
-                            (customer) => DropdownMenuItem<Customer?>(
-                              value: customer,
-                              child: Text(customer.displayName),
-                            ),
-                          ),
-                        ],
-                        onChanged: (customer) {
-                          setState(() {
-                            _selectedCustomer = customer;
-                          });
-                        },
-                      ),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
           ),
 
-          // Service Items List
-          Expanded(
-            child: _orderItems.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          Icons.shopping_cart_outlined,
-                          size: 64,
-                          color: Colors.grey.shade400,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          'No services added yet',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Tap the + button to add services',
-                          style: TextStyle(color: Colors.grey.shade500),
-                        ),
-                      ],
-                    ),
-                  )
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16.0),
-                    itemCount: _orderItems.length,
-                    itemBuilder: (context, index) {
-                      final item = _orderItems[index];
-                      return Card(
-                        margin: const EdgeInsets.only(bottom: 8.0),
-                        child: ListTile(
-                          leading: CircleAvatar(
-                            backgroundColor: Colors.blue.shade100,
-                            child: Text(
-                              item.quantity.toString(),
-                              style: TextStyle(
-                                color: Colors.blue.shade700,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ),
-                          title: Text(
-                            item.serviceName,
-                            style: const TextStyle(fontWeight: FontWeight.w500),
-                          ),
-                          subtitle: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Technician: ${item.technicianName}'),
-                              Text(
-                                'Price: \$${item.originalPrice.toStringAsFixed(2)} each',
-                              ),
-                            ],
-                          ),
-                          trailing: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '\$${item.lineTotal.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                              Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    onPressed: () => _updateItemQuantity(
-                                      index,
-                                      item.quantity - 1,
-                                    ),
-                                    icon: const Icon(
-                                      Icons.remove_circle_outline,
-                                    ),
-                                    iconSize: 20,
-                                  ),
-                                  Text(item.quantity.toString()),
-                                  IconButton(
-                                    onPressed: () => _updateItemQuantity(
-                                      index,
-                                      item.quantity + 1,
-                                    ),
-                                    icon: const Icon(Icons.add_circle_outline),
-                                    iconSize: 20,
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
-          ),
-
-          // Bottom Action Bar
+          // Right side - Running Receipt
           Container(
-            padding: const EdgeInsets.all(16.0),
+            width: 350,
             decoration: BoxDecoration(
               color: Colors.white,
               boxShadow: [
                 BoxShadow(
                   color: Colors.grey.shade300,
                   blurRadius: 4,
-                  offset: const Offset(0, -2),
+                  offset: const Offset(-2, 0),
                 ),
               ],
             ),
             child: Column(
               children: [
-                // Order Summary
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text('Subtotal:', style: TextStyle(fontSize: 16)),
-                    Text(
-                      '\$${_subtotal.toStringAsFixed(2)}',
-                      style: const TextStyle(fontSize: 16),
-                    ),
-                  ],
-                ),
-                if (_currentOrder.orderDiscount != null) ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                // Receipt Header
+                Container(
+                  padding: const EdgeInsets.all(16.0),
+                  color: Colors.blue.shade700,
+                  child: const Row(
                     children: [
+                      Icon(Icons.receipt, color: Colors.white),
+                      SizedBox(width: 8),
                       Text(
-                        'Discount (${_currentOrder.orderDiscount!.name}):',
-                        style: const TextStyle(fontSize: 16),
-                      ),
-                      Text(
-                        '-\$${_currentOrder.orderDiscount!.calculateDiscount(_subtotal).toStringAsFixed(2)}',
-                        style: const TextStyle(fontSize: 16, color: Colors.red),
-                      ),
-                    ],
-                  ),
-                ],
-                if (_currentOrder.taxAmount > 0) ...[
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      const Text('Tax:', style: TextStyle(fontSize: 16)),
-                      Text(
-                        '\$${_currentOrder.taxAmount.toStringAsFixed(2)}',
-                        style: const TextStyle(fontSize: 16),
-                      ),
-                    ],
-                  ),
-                ],
-                const Divider(),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    const Text(
-                      'Total:',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '\$${_total.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                // Action Buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: _addServiceItem,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add Service'),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: _orderItems.isNotEmpty
-                            ? _proceedToCheckout
-                            : null,
-                        icon: const Icon(Icons.payment),
-                        label: const Text('Checkout'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green,
-                          foregroundColor: Colors.white,
+                        'Order Receipt',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
                         ),
                       ),
+                    ],
+                  ),
+                ),
+
+                // Receipt Items
+                Expanded(
+                  child: _orderItems.isEmpty
+                      ? const Center(
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                Icons.receipt_long_outlined,
+                                size: 64,
+                                color: Colors.grey,
+                              ),
+                              SizedBox(height: 16),
+                              Text(
+                                'No items added',
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                              Text(
+                                'Select services to add them here',
+                                style: TextStyle(
+                                  fontSize: 14,
+                                  color: Colors.grey,
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(16.0),
+                          itemCount: _orderItems.length,
+                          itemBuilder: (context, index) {
+                            final item = _orderItems[index];
+                            return _buildReceiptItem(item, index);
+                          },
+                        ),
+                ),
+
+                // Receipt Total
+                Container(
+                  padding: const EdgeInsets.all(16.0),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.shade50,
+                    border: Border(
+                      top: BorderSide(color: Colors.grey.shade300),
                     ),
-                  ],
+                  ),
+                  child: Column(
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('Subtotal:'),
+                          Text('\$${_subtotal.toStringAsFixed(2)}'),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Total (${_orderItems.length} items):',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          Text(
+                            '\$${_total.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          onPressed: _orderItems.isNotEmpty
+                              ? _proceedToCheckout
+                              : null,
+                          icon: const Icon(Icons.payment),
+                          label: const Text('Proceed to Checkout'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -584,95 +759,81 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
         return Colors.red;
     }
   }
-
-  String _formatDate(DateTime date) {
-    return '${date.month}/${date.day}/${date.year} ${date.hour}:${date.minute.toString().padLeft(2, '0')}';
-  }
 }
 
-class _AddServiceItemDialog extends StatefulWidget {
-  final List<ServiceCatalog> availableServices;
+class _TechnicianSelectionDialog extends StatefulWidget {
+  final ServiceCatalog service;
   final List<Employee> availableEmployees;
-  final Function(ServiceCatalog service, Employee employee, int quantity) onAdd;
+  final Function(Employee employee, int quantity) onAdd;
 
-  const _AddServiceItemDialog({
-    required this.availableServices,
+  const _TechnicianSelectionDialog({
+    required this.service,
     required this.availableEmployees,
     required this.onAdd,
   });
 
   @override
-  State<_AddServiceItemDialog> createState() => _AddServiceItemDialogState();
+  State<_TechnicianSelectionDialog> createState() =>
+      _TechnicianSelectionDialogState();
 }
 
-class _AddServiceItemDialogState extends State<_AddServiceItemDialog> {
-  ServiceCatalog? _selectedService;
+class _TechnicianSelectionDialogState
+    extends State<_TechnicianSelectionDialog> {
   Employee? _selectedEmployee;
   int _quantity = 1;
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Add Service Item'),
+      title: Text('Add ${widget.service.name}'),
       content: Column(
         mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Service Selection
-          DropdownButtonFormField<ServiceCatalog>(
-            value: _selectedService,
-            decoration: const InputDecoration(
-              labelText: 'Service',
-              border: OutlineInputBorder(),
+          // Service Details
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(8),
             ),
-            items: widget.availableServices.map((service) {
-              return DropdownMenuItem(
-                value: service,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(service.name),
-                    Text(
-                      '\$${service.price.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: Colors.grey.shade600,
-                      ),
-                    ),
-                  ],
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  widget.service.name,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
-              );
-            }).toList(),
-            onChanged: (service) {
-              setState(() {
-                _selectedService = service;
-              });
-            },
-            validator: (value) =>
-                value == null ? 'Please select a service' : null,
+                const SizedBox(height: 4),
+                Text('\$${widget.service.price.toStringAsFixed(2)}'),
+                Text('Duration: ${widget.service.durationMinutes} minutes'),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
 
           // Employee Selection
-          DropdownButtonFormField<Employee>(
-            value: _selectedEmployee,
-            decoration: const InputDecoration(
-              labelText: 'Technician',
-              border: OutlineInputBorder(),
-            ),
-            items: widget.availableEmployees.map((employee) {
-              return DropdownMenuItem(
-                value: employee,
-                child: Text(employee.name),
-              );
-            }).toList(),
-            onChanged: (employee) {
-              setState(() {
-                _selectedEmployee = employee;
-              });
-            },
-            validator: (value) =>
-                value == null ? 'Please select a technician' : null,
+          const Text(
+            'Select Technician:',
+            style: TextStyle(fontWeight: FontWeight.w500),
           ),
+          const SizedBox(height: 8),
+          ...widget.availableEmployees.map((employee) {
+            return RadioListTile<Employee>(
+              title: Text(employee.name),
+              subtitle: Text(employee.email),
+              value: employee,
+              groupValue: _selectedEmployee,
+              onChanged: (Employee? value) {
+                setState(() {
+                  _selectedEmployee = value;
+                });
+              },
+            );
+          }),
           const SizedBox(height: 16),
 
           // Quantity Selection
@@ -685,7 +846,13 @@ class _AddServiceItemDialogState extends State<_AddServiceItemDialog> {
                     : null,
                 icon: const Icon(Icons.remove_circle_outline),
               ),
-              Text(_quantity.toString()),
+              Text(
+                _quantity.toString(),
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
               IconButton(
                 onPressed: () => setState(() => _quantity++),
                 icon: const Icon(Icons.add_circle_outline),
@@ -700,17 +867,13 @@ class _AddServiceItemDialogState extends State<_AddServiceItemDialog> {
           child: const Text('Cancel'),
         ),
         ElevatedButton(
-          onPressed: _selectedService != null && _selectedEmployee != null
+          onPressed: _selectedEmployee != null
               ? () {
-                  widget.onAdd(
-                    _selectedService!,
-                    _selectedEmployee!,
-                    _quantity,
-                  );
+                  widget.onAdd(_selectedEmployee!, _quantity);
                   Navigator.of(context).pop();
                 }
               : null,
-          child: const Text('Add'),
+          child: const Text('Add to Order'),
         ),
       ],
     );
