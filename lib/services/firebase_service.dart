@@ -381,6 +381,49 @@ class FirebaseService {
     }
   }
 
+  // Generate next sequential order number for today
+  static Future<String> generateDailyOrderNumber() async {
+    try {
+      final now = DateTime.now();
+      final todayStart = DateTime(now.year, now.month, now.day);
+      final todayEnd = todayStart.add(const Duration(days: 1));
+
+      // Get all orders created today
+      final querySnapshot = await _firestore
+          .collection(_serviceOrdersCollection)
+          .where(
+            'createdAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(todayStart),
+          )
+          .where('createdAt', isLessThan: Timestamp.fromDate(todayEnd))
+          .orderBy('createdAt', descending: true)
+          .get();
+
+      // Find the highest order number for today
+      int highestNumber = 0;
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data();
+        final orderNumber = data['orderNumber'] as String?;
+        if (orderNumber != null && orderNumber.length == 4) {
+          final num = int.tryParse(orderNumber);
+          if (num != null && num > highestNumber) {
+            highestNumber = num;
+          }
+        }
+      }
+
+      // Return next number in sequence, formatted as 4-digit string
+      final nextNumber = highestNumber + 1;
+      return nextNumber.toString().padLeft(4, '0');
+    } catch (e) {
+      print('Error generating daily order number: $e');
+      // Fallback to time-based number if query fails
+      final now = DateTime.now();
+      final timeBasedNumber = (now.millisecondsSinceEpoch % 9999) + 1;
+      return timeBasedNumber.toString().padLeft(4, '0');
+    }
+  }
+
   static Future<String> addServiceOrder(ServiceOrder order) async {
     try {
       print('Adding service order: ${order.orderNumber}');
@@ -548,6 +591,36 @@ class FirebaseService {
     } catch (e) {
       print('Error deleting service order item: $e');
       throw Exception('Failed to delete service order item: $e');
+    }
+  }
+
+  // Delete a service order and all its related items
+  static Future<void> deleteServiceOrder(String orderId) async {
+    try {
+      // First, delete all service order items for this order
+      final itemsSnapshot = await _firestore
+          .collection(_serviceOrderItemsCollection)
+          .where('serviceOrderId', isEqualTo: orderId)
+          .get();
+
+      // Delete all service order items in a batch
+      final batch = _firestore.batch();
+      for (final doc in itemsSnapshot.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // Delete the service order itself
+      batch.delete(
+        _firestore.collection(_serviceOrdersCollection).doc(orderId),
+      );
+
+      // Commit the batch operation
+      await batch.commit();
+
+      print('Service order and related items deleted: $orderId');
+    } catch (e) {
+      print('Error deleting service order: $e');
+      throw Exception('Failed to delete service order: $e');
     }
   }
 

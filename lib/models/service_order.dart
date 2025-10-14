@@ -310,9 +310,11 @@ class ServiceOrder {
   }
 
   static String generateOrderNumber() {
+    // For now, generate a simple 4-digit number based on time
+    // This will be improved with proper sequential numbering in FirebaseService
     final now = DateTime.now();
-    final timestamp = now.millisecondsSinceEpoch.toString().substring(6);
-    return 'SO$timestamp';
+    final timeBasedNumber = (now.millisecondsSinceEpoch % 9999) + 1;
+    return timeBasedNumber.toString().padLeft(4, '0');
   }
 
   @override

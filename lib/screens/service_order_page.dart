@@ -42,13 +42,14 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     _loadLoyaltySettings();
   }
 
-  void _initializeOrder() {
+  void _initializeOrder() async {
     if (widget.existingOrder != null) {
       _currentOrder = widget.existingOrder!;
     } else {
-      _currentOrder = ServiceOrder(
-        orderNumber: ServiceOrder.generateOrderNumber(),
-      );
+      // Generate proper daily sequential order number
+      final orderNumber = await FirebaseService.generateDailyOrderNumber();
+      _currentOrder = ServiceOrder(orderNumber: orderNumber);
+      setState(() {}); // Refresh UI with the new order number
     }
   }
 
@@ -209,12 +210,81 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
             backgroundColor: Colors.blue,
           ),
         );
+        // Navigate back to dashboard
+        Navigator.of(context).pop();
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text('Error saving order: $e')));
+      }
+    } finally {
+      setState(() {
+        _isSaving = false;
+      });
+    }
+  }
+
+  // Show delete confirmation dialog
+  void _showDeleteConfirmation() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: const Text('Delete Service Order'),
+          content: Text(
+            'Are you sure you want to delete Order #${_currentOrder.orderNumber}?\n\nThis action cannot be undone.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () async {
+                Navigator.of(context).pop();
+                await _deleteServiceOrder();
+              },
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('Delete'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // Delete service order
+  Future<void> _deleteServiceOrder() async {
+    try {
+      setState(() {
+        _isSaving = true;
+      });
+
+      await FirebaseService.deleteServiceOrder(_currentOrder.id!);
+
+      // Show success message and navigate back
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Order #${_currentOrder.orderNumber} deleted successfully',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+        Navigator.of(context).pop(); // Go back to previous screen
+      }
+    } catch (e) {
+      print('Error deleting service order: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Failed to delete service order'),
+            backgroundColor: Colors.red,
+          ),
+        );
       }
     } finally {
       setState(() {
@@ -318,6 +388,13 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
               ),
             )
           else ...[
+            // Delete button - only show for existing orders
+            if (_currentOrder.id != null)
+              IconButton(
+                onPressed: _showDeleteConfirmation,
+                icon: const Icon(Icons.delete_outline),
+                tooltip: 'Delete Order',
+              ),
             // Save button - saves order for later
             IconButton(
               onPressed: _saveOrderForLater,
