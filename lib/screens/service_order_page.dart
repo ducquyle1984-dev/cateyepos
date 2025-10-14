@@ -35,7 +35,8 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   bool _isSaving = false;
   Customer? _selectedCustomer;
   String? _selectedCategoryId;
-  String? _preSelectedTechnicianId; // Track pre-selected technician from dashboard
+  String?
+  _preSelectedTechnicianId; // Track pre-selected technician from dashboard
 
   // Loyalty points settings
   double _pointsPerDollar = 1.0;
@@ -783,6 +784,30 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                               ),
                             ],
                           ),
+
+                          // Remove discount button if there's an active order discount
+                          if (_currentOrder.orderDiscount != null) ...[
+                            const SizedBox(height: 8),
+                            SizedBox(
+                              width: double.infinity,
+                              child: ElevatedButton.icon(
+                                onPressed: _removeOrderDiscount,
+                                icon: const Icon(Icons.clear, size: 14),
+                                label: const Text(
+                                  'Remove Order Discount',
+                                  style: TextStyle(fontSize: 11),
+                                ),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red.shade100,
+                                  foregroundColor: Colors.red.shade700,
+                                  elevation: 0,
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 8,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ],
                       ),
                     ),
@@ -1052,29 +1077,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                   ),
                 ),
               ),
-              // Discount button for individual items
-              SizedBox(
-                width: 80, // Fixed width to prevent layout issues
-                child: TextButton.icon(
-                  icon: Icon(
-                    Icons.local_offer_outlined,
-                    size: 14,
-                    color: item.itemDiscount != null
-                        ? Colors.green.shade600
-                        : Colors.blue.shade600,
-                  ),
-                  label: Text(
-                    item.itemDiscount != null ? 'Edit' : 'Disc',
-                    style: TextStyle(
-                      fontSize: 10,
-                      color: item.itemDiscount != null
-                          ? Colors.green.shade600
-                          : Colors.blue.shade600,
-                    ),
-                  ),
-                  onPressed: () => _showItemDiscountDialog(item, index),
-                ),
-              ),
               IconButton(
                 icon: const Icon(Icons.delete_outline, size: 18),
                 onPressed: () => _removeOrderItem(index),
@@ -1215,266 +1217,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
             child: const Text('Cancel'),
           ),
         ],
-      ),
-    );
-  }
-
-  void _showOrderDiscountDialog() {
-    final TextEditingController nameController = TextEditingController();
-    final TextEditingController valueController = TextEditingController();
-    DiscountType selectedType = DiscountType.percentage;
-
-    // Pre-fill if there's an existing discount
-    if (_currentOrder.orderDiscount != null) {
-      nameController.text = _currentOrder.orderDiscount!.name;
-      valueController.text = _currentOrder.orderDiscount!.value.toString();
-      selectedType = _currentOrder.orderDiscount!.type;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Order Discount'),
-          content: SizedBox(
-            width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Discount Name',
-                    hintText: 'e.g., Senior Discount, Loyalty',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: valueController,
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: selectedType == DiscountType.percentage
-                              ? 'Percentage'
-                              : 'Amount',
-                          hintText: selectedType == DiscountType.percentage
-                              ? '10'
-                              : '5.00',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    DropdownButton<DiscountType>(
-                      value: selectedType,
-                      items: DiscountType.values.map((type) {
-                        return DropdownMenuItem(
-                          value: type,
-                          child: Text(type.displayName),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setDialogState(() {
-                            selectedType = value;
-                          });
-                        }
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (_currentOrder.orderDiscount != null)
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _currentOrder = _currentOrder.copyWith(
-                          orderDiscount: null,
-                        );
-                      });
-                      Navigator.of(context).pop();
-                    },
-                    style: TextButton.styleFrom(foregroundColor: Colors.red),
-                    child: const Text('Remove Discount'),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                final name = nameController.text.trim();
-                final valueText = valueController.text.trim();
-
-                if (name.isEmpty || valueText.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Please fill in all fields')),
-                  );
-                  return;
-                }
-
-                final value = double.tryParse(valueText);
-                if (value == null || value <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Please enter a valid discount value'),
-                    ),
-                  );
-                  return;
-                }
-
-                final discount = ServiceOrderDiscount(
-                  name: name,
-                  type: selectedType,
-                  value: value,
-                );
-
-                setState(() {
-                  _currentOrder = _currentOrder.copyWith(
-                    orderDiscount: discount,
-                  );
-                });
-                Navigator.of(context).pop();
-              },
-              child: const Text('Apply'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _showItemDiscountDialog(ServiceOrderItem item, int index) {
-    final TextEditingController nameController = TextEditingController();
-    final TextEditingController valueController = TextEditingController();
-    DiscountType selectedType = DiscountType.percentage;
-
-    // Pre-fill if there's an existing discount
-    if (item.itemDiscount != null) {
-      nameController.text = item.itemDiscount!.name;
-      valueController.text = item.itemDiscount!.value.toString();
-      selectedType = item.itemDiscount!.type;
-    }
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('Discount for ${item.serviceName}'),
-          content: SizedBox(
-            width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameController,
-                  decoration: const InputDecoration(
-                    labelText: 'Discount Name',
-                    hintText: 'e.g., First Time, Student',
-                  ),
-                ),
-                const SizedBox(height: 16),
-                Row(
-                  children: [
-                    Expanded(
-                      child: TextField(
-                        controller: valueController,
-                        keyboardType: TextInputType.number,
-                        decoration: InputDecoration(
-                          labelText: selectedType == DiscountType.percentage
-                              ? 'Percentage'
-                              : 'Amount',
-                          hintText: selectedType == DiscountType.percentage
-                              ? '10'
-                              : '5.00',
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 16),
-                    DropdownButton<DiscountType>(
-                      value: selectedType,
-                      items: DiscountType.values.map((type) {
-                        return DropdownMenuItem(
-                          value: type,
-                          child: Text(type.displayName),
-                        );
-                      }).toList(),
-                      onChanged: (value) {
-                        if (value != null) {
-                          setDialogState(() {
-                            selectedType = value;
-                          });
-                        }
-                      },
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                if (item.itemDiscount != null)
-                  TextButton(
-                    onPressed: () {
-                      setState(() {
-                        _orderItems[index] = _orderItems[index].copyWith(
-                          itemDiscount: null,
-                        );
-                      });
-                      Navigator.of(context).pop();
-                    },
-                    style: TextButton.styleFrom(foregroundColor: Colors.red),
-                    child: const Text('Remove Discount'),
-                  ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () {
-                final name = nameController.text.trim();
-                final valueText = valueController.text.trim();
-
-                if (name.isEmpty || valueText.isEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Please fill in all fields')),
-                  );
-                  return;
-                }
-
-                final value = double.tryParse(valueText);
-                if (value == null || value <= 0) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('Please enter a valid discount value'),
-                    ),
-                  );
-                  return;
-                }
-
-                final discount = ServiceOrderItemDiscount(
-                  name: name,
-                  type: selectedType,
-                  value: value,
-                );
-
-                setState(() {
-                  _orderItems[index] = _orderItems[index].copyWith(
-                    itemDiscount: discount,
-                  );
-                });
-                Navigator.of(context).pop();
-              },
-              child: const Text('Apply'),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -1659,6 +1401,12 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
           value: amount,
         ),
       );
+    });
+  }
+
+  void _removeOrderDiscount() {
+    setState(() {
+      _currentOrder = _currentOrder.copyWith(orderDiscount: null);
     });
   }
 
