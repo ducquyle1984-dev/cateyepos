@@ -2,6 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/category.dart';
 import '../models/service_catalog.dart';
 import '../models/employee.dart';
+import '../models/customer.dart';
+import '../models/service_order.dart';
+import '../models/service_order_item.dart';
 
 class FirebaseService {
   static final FirebaseFirestore _firestore = FirebaseFirestore.instance;
@@ -10,6 +13,9 @@ class FirebaseService {
   static const String _categoriesCollection = 'categories';
   static const String _servicesCollection = 'services';
   static const String _employeesCollection = 'employees';
+  static const String _customersCollection = 'customers';
+  static const String _serviceOrdersCollection = 'service_orders';
+  static const String _serviceOrderItemsCollection = 'service_order_items';
 
   // Categories CRUD operations
   static Future<List<Category>> getCategories() async {
@@ -24,7 +30,7 @@ class FirebaseService {
       final categories = snapshot.docs
           .map((doc) => Category.fromMap({...doc.data(), 'id': doc.id}))
           .toList();
-      
+
       // Sort by name in code to avoid index requirements
       categories.sort((a, b) => a.name.compareTo(b.name));
 
@@ -91,7 +97,7 @@ class FirebaseService {
       final services = snapshot.docs
           .map((doc) => ServiceCatalog.fromMap({...doc.data(), 'id': doc.id}))
           .toList();
-      
+
       // Sort by name in code to avoid index requirements
       services.sort((a, b) => a.name.compareTo(b.name));
 
@@ -150,20 +156,18 @@ class FirebaseService {
         .collection(_servicesCollection)
         .where('isActive', isEqualTo: true)
         .snapshots()
-        .map(
-          (snapshot) {
-            final services = snapshot.docs
-                .map(
-                  (doc) => ServiceCatalog.fromMap({...doc.data(), 'id': doc.id}),
-                )
-                .toList();
-            
-            // Sort by name in code to avoid index requirements
-            services.sort((a, b) => a.name.compareTo(b.name));
-            
-            return services;
-          },
-        );
+        .map((snapshot) {
+          final services = snapshot.docs
+              .map(
+                (doc) => ServiceCatalog.fromMap({...doc.data(), 'id': doc.id}),
+              )
+              .toList();
+
+          // Sort by name in code to avoid index requirements
+          services.sort((a, b) => a.name.compareTo(b.name));
+
+          return services;
+        });
   }
 
   // Employees CRUD operations
@@ -220,5 +224,373 @@ class FirebaseService {
       print('Error deleting employee: $e');
       throw Exception('Failed to delete employee: $e');
     }
+  }
+
+  // Customer CRUD operations
+  static Future<List<Customer>> getCustomers() async {
+    try {
+      print('Fetching customers from Firebase...');
+      final snapshot = await _firestore
+          .collection(_customersCollection)
+          .where('isActive', isEqualTo: true)
+          .get();
+
+      print('Found ${snapshot.docs.length} customers in Firebase');
+      final customers = snapshot.docs
+          .map((doc) => Customer.fromFirestore(doc))
+          .toList();
+
+      // Sort by last name, then first name in code
+      customers.sort((a, b) {
+        final lastNameComparison = a.lastName.compareTo(b.lastName);
+        if (lastNameComparison != 0) return lastNameComparison;
+        return a.firstName.compareTo(b.firstName);
+      });
+
+      return customers;
+    } catch (e) {
+      print('Error fetching customers: $e');
+      return [];
+    }
+  }
+
+  static Future<Customer?> getCustomer(String customerId) async {
+    try {
+      final doc = await _firestore
+          .collection(_customersCollection)
+          .doc(customerId)
+          .get();
+
+      if (doc.exists) {
+        return Customer.fromFirestore(doc);
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching customer: $e');
+      return null;
+    }
+  }
+
+  static Future<String> addCustomer(Customer customer) async {
+    try {
+      print('Adding customer: ${customer.displayName}');
+      final docRef = await _firestore
+          .collection(_customersCollection)
+          .add(customer.toMap());
+      print('Customer added with ID: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      print('Error adding customer: $e');
+      throw Exception('Failed to add customer: $e');
+    }
+  }
+
+  static Future<void> saveCustomer(Customer customer) async {
+    try {
+      print('Saving customer: ${customer.displayName} with ID: ${customer.id}');
+      await _firestore
+          .collection(_customersCollection)
+          .doc(customer.id)
+          .set(customer.toMap(), SetOptions(merge: true));
+      print('Customer saved successfully: ${customer.displayName}');
+    } catch (e) {
+      print('Error saving customer: $e');
+      throw Exception('Failed to save customer: $e');
+    }
+  }
+
+  static Future<void> deleteCustomer(String customerId) async {
+    try {
+      // Soft delete by setting isActive to false
+      await _firestore.collection(_customersCollection).doc(customerId).update({
+        'isActive': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      print('Customer soft deleted: $customerId');
+    } catch (e) {
+      print('Error deleting customer: $e');
+      throw Exception('Failed to delete customer: $e');
+    }
+  }
+
+  static Future<void> updateCustomerLoyaltyPoints(
+    String customerId,
+    int pointsToAdd,
+    double totalSpent,
+  ) async {
+    try {
+      await _firestore.collection(_customersCollection).doc(customerId).update({
+        'loyaltyPoints': FieldValue.increment(pointsToAdd),
+        'totalSpent': FieldValue.increment(totalSpent),
+        'totalVisits': FieldValue.increment(1),
+        'lastVisit': FieldValue.serverTimestamp(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      print(
+        'Customer loyalty points updated: $customerId (+$pointsToAdd points, +\$${totalSpent.toStringAsFixed(2)})',
+      );
+    } catch (e) {
+      print('Error updating customer loyalty points: $e');
+      throw Exception('Failed to update customer loyalty points: $e');
+    }
+  }
+
+  // Service Order CRUD operations
+  static Future<List<ServiceOrder>> getServiceOrders({
+    ServiceOrderStatus? status,
+  }) async {
+    try {
+      print('Fetching service orders from Firebase...');
+      Query query = _firestore.collection(_serviceOrdersCollection);
+
+      if (status != null) {
+        query = query.where('status', isEqualTo: status.displayName);
+      }
+
+      final snapshot = await query.get();
+
+      print('Found ${snapshot.docs.length} service orders in Firebase');
+      final orders = snapshot.docs
+          .map((doc) => ServiceOrder.fromFirestore(doc))
+          .toList();
+
+      // Sort by creation date (newest first) in code
+      orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      return orders;
+    } catch (e) {
+      print('Error fetching service orders: $e');
+      return [];
+    }
+  }
+
+  static Future<ServiceOrder?> getServiceOrder(String orderId) async {
+    try {
+      final doc = await _firestore
+          .collection(_serviceOrdersCollection)
+          .doc(orderId)
+          .get();
+
+      if (doc.exists) {
+        return ServiceOrder.fromFirestore(doc);
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching service order: $e');
+      return null;
+    }
+  }
+
+  static Future<String> addServiceOrder(ServiceOrder order) async {
+    try {
+      print('Adding service order: ${order.orderNumber}');
+      final docRef = await _firestore
+          .collection(_serviceOrdersCollection)
+          .add(order.toMap());
+      print('Service order added with ID: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      print('Error adding service order: $e');
+      throw Exception('Failed to add service order: $e');
+    }
+  }
+
+  static Future<void> saveServiceOrder(ServiceOrder order) async {
+    try {
+      print('Saving service order: ${order.orderNumber} with ID: ${order.id}');
+      await _firestore
+          .collection(_serviceOrdersCollection)
+          .doc(order.id)
+          .set(order.toMap(), SetOptions(merge: true));
+      print('Service order saved successfully: ${order.orderNumber}');
+    } catch (e) {
+      print('Error saving service order: $e');
+      throw Exception('Failed to save service order: $e');
+    }
+  }
+
+  static Future<void> updateServiceOrderStatus(
+    String orderId,
+    ServiceOrderStatus status,
+  ) async {
+    try {
+      final updates = {
+        'status': status.displayName,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (status == ServiceOrderStatus.completed) {
+        updates['completedAt'] = FieldValue.serverTimestamp();
+      }
+
+      await _firestore
+          .collection(_serviceOrdersCollection)
+          .doc(orderId)
+          .update(updates);
+
+      print('Service order status updated: $orderId -> ${status.displayName}');
+    } catch (e) {
+      print('Error updating service order status: $e');
+      throw Exception('Failed to update service order status: $e');
+    }
+  }
+
+  // Service Order Item CRUD operations
+  static Future<List<ServiceOrderItem>> getServiceOrderItems(
+    String serviceOrderId,
+  ) async {
+    try {
+      print('Fetching service order items for order: $serviceOrderId');
+      final snapshot = await _firestore
+          .collection(_serviceOrderItemsCollection)
+          .where('serviceOrderId', isEqualTo: serviceOrderId)
+          .get();
+
+      print('Found ${snapshot.docs.length} service order items');
+      final items = snapshot.docs
+          .map((doc) => ServiceOrderItem.fromFirestore(doc))
+          .toList();
+
+      // Sort by creation date
+      items.sort((a, b) => a.createdAt.compareTo(b.createdAt));
+
+      return items;
+    } catch (e) {
+      print('Error fetching service order items: $e');
+      return [];
+    }
+  }
+
+  static Future<ServiceOrderItem?> getServiceOrderItem(String itemId) async {
+    try {
+      final doc = await _firestore
+          .collection(_serviceOrderItemsCollection)
+          .doc(itemId)
+          .get();
+
+      if (doc.exists) {
+        return ServiceOrderItem.fromFirestore(doc);
+      }
+      return null;
+    } catch (e) {
+      print('Error fetching service order item: $e');
+      return null;
+    }
+  }
+
+  static Future<String> addServiceOrderItem(ServiceOrderItem item) async {
+    try {
+      print('Adding service order item: ${item.serviceName}');
+      final docRef = await _firestore
+          .collection(_serviceOrderItemsCollection)
+          .add(item.toMap());
+      print('Service order item added with ID: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      print('Error adding service order item: $e');
+      throw Exception('Failed to add service order item: $e');
+    }
+  }
+
+  static Future<void> saveServiceOrderItem(ServiceOrderItem item) async {
+    try {
+      print(
+        'Saving service order item: ${item.serviceName} with ID: ${item.id}',
+      );
+      await _firestore
+          .collection(_serviceOrderItemsCollection)
+          .doc(item.id)
+          .set(item.toMap(), SetOptions(merge: true));
+      print('Service order item saved successfully: ${item.serviceName}');
+    } catch (e) {
+      print('Error saving service order item: $e');
+      throw Exception('Failed to save service order item: $e');
+    }
+  }
+
+  static Future<void> updateServiceOrderItemStatus(
+    String itemId,
+    ServiceOrderItemStatus status,
+  ) async {
+    try {
+      final updates = {
+        'status': status.displayName,
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (status == ServiceOrderItemStatus.inProgress) {
+        updates['startedAt'] = FieldValue.serverTimestamp();
+      } else if (status == ServiceOrderItemStatus.completed) {
+        updates['completedAt'] = FieldValue.serverTimestamp();
+      }
+
+      await _firestore
+          .collection(_serviceOrderItemsCollection)
+          .doc(itemId)
+          .update(updates);
+
+      print(
+        'Service order item status updated: $itemId -> ${status.displayName}',
+      );
+    } catch (e) {
+      print('Error updating service order item status: $e');
+      throw Exception('Failed to update service order item status: $e');
+    }
+  }
+
+  static Future<void> deleteServiceOrderItem(String itemId) async {
+    try {
+      await _firestore
+          .collection(_serviceOrderItemsCollection)
+          .doc(itemId)
+          .delete();
+      print('Service order item deleted: $itemId');
+    } catch (e) {
+      print('Error deleting service order item: $e');
+      throw Exception('Failed to delete service order item: $e');
+    }
+  }
+
+  // Loyalty Points Configuration
+  static Future<Map<String, dynamic>> getLoyaltyPointsConfig() async {
+    try {
+      final doc = await _firestore
+          .collection('settings')
+          .doc('loyalty_points')
+          .get();
+
+      if (doc.exists) {
+        return doc.data() as Map<String, dynamic>;
+      } else {
+        // Return default configuration
+        return {'pointsPerDollar': 1.0, 'minimumSpend': 0.0, 'isEnabled': true};
+      }
+    } catch (e) {
+      print('Error fetching loyalty points config: $e');
+      return {'pointsPerDollar': 1.0, 'minimumSpend': 0.0, 'isEnabled': true};
+    }
+  }
+
+  static Future<void> saveLoyaltyPointsConfig(
+    Map<String, dynamic> config,
+  ) async {
+    try {
+      await _firestore
+          .collection('settings')
+          .doc('loyalty_points')
+          .set(config, SetOptions(merge: true));
+      print('Loyalty points config saved successfully');
+    } catch (e) {
+      print('Error saving loyalty points config: $e');
+      throw Exception('Failed to save loyalty points config: $e');
+    }
+  }
+
+  // Helper method to calculate loyalty points
+  static int calculateLoyaltyPoints(
+    double totalAmount,
+    double pointsPerDollar,
+  ) {
+    return (totalAmount * pointsPerDollar).round();
   }
 }
