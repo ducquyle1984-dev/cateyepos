@@ -15,8 +15,8 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'CatEye POS',
-      theme: ThemeData(primarySwatch: Colors.blue),
+      title: 'Cateye POS',
+      theme: ThemeData(primarySwatch: Colors.blue, useMaterial3: true),
       home: const LoginPage(),
       debugShowCheckedModeBanner: false,
     );

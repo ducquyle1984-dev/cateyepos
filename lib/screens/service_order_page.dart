@@ -7,7 +7,7 @@ import '../models/employee.dart';
 import '../models/customer.dart';
 import '../services/firebase_service.dart';
 
-enum PaymentMethod { cash, credit, debit }
+enum PaymentMethod { cash, credit }
 
 class ServiceOrderPage extends StatefulWidget {
   final ServiceOrder? existingOrder;
@@ -41,8 +41,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
 
   // Payment flow state
   bool _showPaymentOptions = false;
-  PaymentMethod? _selectedPaymentMethod;
-  bool _showCashCheckout = false;
   double _amountPaid = 0.0;
   double _totalPaidSoFar = 0.0;
   List<double> _partialPayments = [];
@@ -366,21 +364,83 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     await _saveOrder();
     _calculateLoyaltyPoints();
 
-    setState(() {
-      _selectedPaymentMethod = method;
-    });
-
     if (method == PaymentMethod.cash) {
       setState(() {
-        _showCashCheckout = true;
         _showPaymentOptions = false;
         _amountPaid = 0.0;
         _amountController.text = '';
       });
+      _showCashPaymentModal();
     } else {
-      // For credit/debit cards, process immediately
+      // For credit cards, process immediately
       await _processCardPayment(method);
     }
+  }
+
+  void _showCashPaymentModal() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Dialog(
+              insetPadding: const EdgeInsets.all(20),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 480,
+                  maxHeight: 850,
+                  minWidth: 400,
+                  minHeight: 500,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.payments,
+                            color: Colors.green,
+                            size: 28,
+                          ),
+                          const SizedBox(width: 12),
+                          const Text(
+                            'Cash Payment',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () {
+                              setState(() {
+                                _amountPaid = 0.0;
+                                _amountController.clear();
+                              });
+                              Navigator.of(context).pop();
+                            },
+                            icon: const Icon(Icons.close, size: 28),
+                            tooltip: 'Close',
+                          ),
+                        ],
+                      ),
+                      const Divider(thickness: 2),
+                      const SizedBox(height: 16),
+
+                      // Content
+                      Expanded(child: _buildCashCheckoutContent(setModalState)),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Future<void> _processCardPayment(PaymentMethod method) async {
@@ -920,7 +980,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                     const SizedBox(height: 16),
 
                     // Payment Method Selection
-                    if (!_showPaymentOptions && !_showCashCheckout) ...[
+                    if (!_showPaymentOptions) ...[
                       SizedBox(
                         width: double.infinity,
                         child: ElevatedButton.icon(
@@ -936,7 +996,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                           ),
                         ),
                       ),
-                    ] else if (_showPaymentOptions && !_showCashCheckout) ...[
+                    ] else if (_showPaymentOptions) ...[
                       // Payment Method Buttons
                       Column(
                         children: [
@@ -984,23 +1044,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                               ),
                             ],
                           ),
-                          const SizedBox(height: 8),
-                          SizedBox(
-                            width: double.infinity,
-                            child: ElevatedButton.icon(
-                              onPressed: () =>
-                                  _selectPaymentMethod(PaymentMethod.debit),
-                              icon: const Icon(Icons.credit_card),
-                              label: const Text('Debit Card'),
-                              style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.purple.shade600,
-                                foregroundColor: Colors.white,
-                                padding: const EdgeInsets.symmetric(
-                                  vertical: 16,
-                                ),
-                              ),
-                            ),
-                          ),
                           const SizedBox(height: 12),
                           TextButton(
                             onPressed: () =>
@@ -1009,8 +1052,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                           ),
                         ],
                       ),
-                    ] else if (_showCashCheckout) ...[
-                      _buildCashCheckoutSection(),
                     ],
                   ],
                 ),
@@ -1701,6 +1742,361 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     );
   }
 
+  // Cash payment modal content
+  Widget _buildCashCheckoutContent(StateSetter setModalState) {
+    return SingleChildScrollView(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Order Summary
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade100,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Column(
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      _totalPaidSoFar > 0 ? 'Remaining:' : 'Total Due:',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Text(
+                      '\$${_remainingBalance.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 24,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange.shade700,
+                      ),
+                    ),
+                  ],
+                ),
+                if (_totalPaidSoFar > 0) ...[
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Already Paid: \$${_totalPaidSoFar.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 14,
+                          color: Colors.green.shade600,
+                        ),
+                      ),
+                      Text(
+                        'Total: \$${_total.toStringAsFixed(2)}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          color: Colors.grey,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 20),
+
+          // Partial Payments History
+          if (_partialPayments.isNotEmpty) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.green.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.green.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.payments,
+                        color: Colors.green.shade600,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      const Text(
+                        'Partial Payments Made',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  ...List.generate(_partialPayments.length, (index) {
+                    final payment = _partialPayments[index];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.green.shade300),
+                      ),
+                      child: Row(
+                        children: [
+                          Text(
+                            'Payment ${index + 1}:',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            '\$${payment.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () {
+                              setModalState(() {
+                                setState(() {
+                                  _totalPaidSoFar -= _partialPayments[index];
+                                  _partialPayments.removeAt(index);
+                                });
+                              });
+                            },
+                            icon: Icon(
+                              Icons.close,
+                              size: 18,
+                              color: Colors.red.shade600,
+                            ),
+                            tooltip: 'Remove payment',
+                          ),
+                        ],
+                      ),
+                    );
+                  }),
+                  const SizedBox(height: 12),
+                  if (_partialPayments.length > 1)
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton.icon(
+                        onPressed: () {
+                          setModalState(() {
+                            setState(() {
+                              _totalPaidSoFar = 0.0;
+                              _partialPayments.clear();
+                            });
+                          });
+                        },
+                        icon: const Icon(Icons.clear_all, size: 16),
+                        label: const Text('Clear All Payments'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.red.shade100,
+                          foregroundColor: Colors.red.shade700,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          // Cash Amount Input
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.blue.shade300, width: 2),
+            ),
+            child: Column(
+              children: [
+                const Text(
+                  'Cash Tendered',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w500,
+                    color: Colors.grey,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Text(
+                  '\$${_amountPaid.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 36,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.blue.shade700,
+                  ),
+                ),
+                if (_amountPaid >= _remainingBalance && _amountPaid > 0) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.green.shade100,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Change: \$${_changeAmount.toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.green.shade700,
+                      ),
+                    ),
+                  ),
+                ] else if (_amountPaid > 0 &&
+                    _amountPaid < _remainingBalance) ...[
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 16,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.orange.shade100,
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: Text(
+                      'Need: \$${(_remainingBalance - _amountPaid).toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange.shade700,
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 20),
+
+                // Number pad
+                _buildModalNumPad(setModalState),
+                const SizedBox(height: 20),
+
+                // Quick amount buttons
+                Row(
+                  children: [
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () {
+                          setModalState(() {
+                            setState(() {
+                              _amountPaid = _remainingBalance;
+                              _amountController.text = _remainingBalance
+                                  .toStringAsFixed(2);
+                            });
+                          });
+                        },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.shade100,
+                          foregroundColor: Colors.green.shade700,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: Text(
+                          'Pay Exact (\$${_remainingBalance.toStringAsFixed(2)})',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 16),
+
+                // Action buttons
+                Row(
+                  children: [
+                    if (_amountPaid > 0 && _amountPaid < _remainingBalance) ...[
+                      Expanded(
+                        child: ElevatedButton(
+                          onPressed: _isProcessingPayment
+                              ? null
+                              : () {
+                                  setModalState(() {
+                                    setState(() {
+                                      _partialPayments.add(_amountPaid);
+                                      _totalPaidSoFar += _amountPaid;
+                                      _amountPaid = 0.0;
+                                      _amountController.clear();
+                                    });
+                                  });
+                                },
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.orange.shade600,
+                            padding: const EdgeInsets.symmetric(vertical: 16),
+                          ),
+                          child: Text(
+                            'Add Partial Payment',
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                    ],
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed:
+                            _isProcessingPayment ||
+                                (_amountPaid <= 0 ||
+                                    (_amountPaid < _remainingBalance &&
+                                        !_isOrderFullyPaid))
+                            ? null
+                            : () async {
+                                await _processCashPayment();
+                                Navigator.of(context).pop();
+                              },
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.green.shade600,
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                        child: _isProcessingPayment
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text(
+                                _isOrderFullyPaid
+                                    ? 'Complete Order'
+                                    : 'Complete Payment',
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // Cash checkout methods
   Widget _buildCashCheckoutSection() {
     return Container(
@@ -1726,7 +2122,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
               IconButton(
                 onPressed: () {
                   setState(() {
-                    _showCashCheckout = false;
                     _showPaymentOptions = false;
                     _amountPaid = 0.0;
                     _amountController.clear();
@@ -2243,6 +2638,171 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     );
   }
 
+  Widget _buildModalNumPad(StateSetter setModalState) {
+    return Column(
+      children: [
+        Row(
+          children: [
+            Expanded(child: _buildModalNumButton('1', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildModalNumButton('2', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildModalNumButton('3', setModalState)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _buildModalNumButton('4', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildModalNumButton('5', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildModalNumButton('6', setModalState)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _buildModalNumButton('7', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildModalNumButton('8', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildModalNumButton('9', setModalState)),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(child: _buildModalNumButton('0', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(child: _buildModalNumButton('00', setModalState)),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SizedBox(
+                height: 60,
+                child: ElevatedButton(
+                  onPressed: _amountController.text.isNotEmpty
+                      ? () => _modalBackspaceAmount(setModalState)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _amountController.text.isNotEmpty
+                        ? Colors.red.shade100
+                        : Colors.grey.shade200,
+                    foregroundColor: _amountController.text.isNotEmpty
+                        ? Colors.red.shade700
+                        : Colors.grey.shade500,
+                  ),
+                  child: const Icon(Icons.backspace, size: 24),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: _amountPaid > 0
+                      ? () => _modalClearAmount(setModalState)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _amountPaid > 0
+                        ? Colors.orange.shade100
+                        : Colors.grey.shade200,
+                    foregroundColor: _amountPaid > 0
+                        ? Colors.orange.shade700
+                        : Colors.grey.shade500,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                  child: const Text(
+                    'Clear All',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildModalNumButton(String value, StateSetter setModalState) {
+    return SizedBox(
+      height: 60,
+      child: ElevatedButton(
+        onPressed: () => _modalAddToAmount(value, setModalState),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black87,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        child: Text(
+          value,
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  void _modalAddToAmount(String digit, StateSetter setModalState) {
+    String currentText = _amountController.text;
+
+    // Handle decimal point
+    if (digit == '.') {
+      if (currentText.contains('.')) return; // Already has decimal
+      if (currentText.isEmpty) currentText = '0';
+    }
+
+    // Prevent multiple leading zeros
+    if (digit == '0' && currentText == '0') return;
+    if (currentText == '0' && digit != '.') currentText = '';
+
+    String newText = currentText + digit;
+    double newAmount = double.tryParse(newText) ?? 0.0;
+
+    // Limit to reasonable amount (max $9999.99)
+    if (newAmount > 9999.99) return;
+
+    setModalState(() {
+      setState(() {
+        _amountPaid = newAmount;
+        _amountController.text = newText;
+      });
+    });
+  }
+
+  void _modalBackspaceAmount(StateSetter setModalState) {
+    String currentText = _amountController.text;
+    if (currentText.isNotEmpty) {
+      String newText = currentText.substring(0, currentText.length - 1);
+      if (newText.isEmpty) newText = '0';
+
+      setModalState(() {
+        setState(() {
+          _amountPaid = double.tryParse(newText) ?? 0.0;
+          _amountController.text = newText;
+        });
+      });
+    }
+  }
+
+  void _modalClearAmount(StateSetter setModalState) {
+    setModalState(() {
+      setState(() {
+        _amountPaid = 0.0;
+        _amountController.text = '0';
+      });
+    });
+  }
+
   Widget _buildSimpleNumButton(String value) {
     return SizedBox(
       height: 50,
@@ -2458,9 +3018,10 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     });
 
     try {
-      // Check if there's change to be given
+      // Check if there's change to be given (only if overpaid)
       double changeAmount = _changeAmount;
-      if (changeAmount > 0) {
+      if (changeAmount > 0.01) {
+        // Only show for meaningful change amounts
         // Show change confirmation dialog
         bool? changeGiven = await _showChangeConfirmationDialog(changeAmount);
         if (changeGiven != true) {
