@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/customer.dart';
-import '../services/firebase_service.dart';
+import '../provider/catalog_provider.dart';
 
 class CustomerManagementPage extends StatefulWidget {
   const CustomerManagementPage({super.key});
@@ -10,40 +11,21 @@ class CustomerManagementPage extends StatefulWidget {
 }
 
 class _CustomerManagementPageState extends State<CustomerManagementPage> {
-  List<Customer> _customers = [];
-  bool _isLoading = true;
   String _searchQuery = '';
   final _searchController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    _loadCustomers();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      Provider.of<CatalogProvider>(context, listen: false).loadAllData();
+    });
   }
 
-  Future<void> _loadCustomers() async {
-    try {
-      final customers = await FirebaseService.getCustomers();
-      setState(() {
-        _customers = customers;
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error loading customers: $e')));
-      }
-    }
-  }
+  List<Customer> _getFilteredCustomers(List<Customer> customers) {
+    if (_searchQuery.isEmpty) return customers;
 
-  List<Customer> get _filteredCustomers {
-    if (_searchQuery.isEmpty) return _customers;
-
-    return _customers.where((customer) {
+    return customers.where((customer) {
       final query = _searchQuery.toLowerCase();
       return customer.firstName.toLowerCase().contains(query) ||
           customer.lastName.toLowerCase().contains(query) ||
@@ -57,7 +39,7 @@ class _CustomerManagementPageState extends State<CustomerManagementPage> {
         .push(MaterialPageRoute(builder: (context) => const CustomerEditPage()))
         .then((result) {
           if (result == true) {
-            _loadCustomers();
+            Provider.of<CatalogProvider>(context, listen: false).loadAllData();
           }
         });
   }
@@ -71,7 +53,7 @@ class _CustomerManagementPageState extends State<CustomerManagementPage> {
         )
         .then((result) {
           if (result == true) {
-            _loadCustomers();
+            Provider.of<CatalogProvider>(context, listen: false).loadAllData();
           }
         });
   }
@@ -92,7 +74,10 @@ class _CustomerManagementPageState extends State<CustomerManagementPage> {
           ElevatedButton(
             onPressed: () async {
               try {
-                await FirebaseService.deleteCustomer(customer.id!);
+                await Provider.of<CatalogProvider>(
+                  context,
+                  listen: false,
+                ).deleteCustomer(customer.id!);
                 if (mounted) {
                   Navigator.of(context).pop();
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -100,7 +85,6 @@ class _CustomerManagementPageState extends State<CustomerManagementPage> {
                       content: Text('Customer deleted successfully'),
                     ),
                   );
-                  _loadCustomers();
                 }
               } catch (e) {
                 if (mounted) {
@@ -121,217 +105,230 @@ class _CustomerManagementPageState extends State<CustomerManagementPage> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Customer Management'),
-        backgroundColor: Colors.blue.shade700,
-        foregroundColor: Colors.white,
-        actions: [
-          IconButton(
-            onPressed: _addCustomer,
-            icon: const Icon(Icons.person_add),
-            tooltip: 'Add Customer',
+    return Consumer<CatalogProvider>(
+      builder: (context, catalogProvider, child) {
+        final filteredCustomers = _getFilteredCustomers(
+          catalogProvider.customers,
+        );
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text('Customer Management'),
+            backgroundColor: Colors.blue.shade700,
+            foregroundColor: Colors.white,
+            actions: [
+              IconButton(
+                onPressed: _addCustomer,
+                icon: const Icon(Icons.person_add),
+                tooltip: 'Add Customer',
+              ),
+            ],
           ),
-        ],
-      ),
-      body: Column(
-        children: [
-          // Search Bar
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: TextField(
-              controller: _searchController,
-              decoration: InputDecoration(
-                hintText: 'Search customers...',
-                prefixIcon: const Icon(Icons.search),
-                suffixIcon: _searchQuery.isNotEmpty
-                    ? IconButton(
-                        onPressed: () {
-                          _searchController.clear();
-                          setState(() {
-                            _searchQuery = '';
-                          });
-                        },
-                        icon: const Icon(Icons.clear),
-                      )
-                    : null,
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
+          body: Column(
+            children: [
+              // Search Bar
+              Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'Search customers...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchQuery.isNotEmpty
+                        ? IconButton(
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() {
+                                _searchQuery = '';
+                              });
+                            },
+                            icon: const Icon(Icons.clear),
+                          )
+                        : null,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  onChanged: (value) {
+                    setState(() {
+                      _searchQuery = value;
+                    });
+                  },
                 ),
               ),
-              onChanged: (value) {
-                setState(() {
-                  _searchQuery = value;
-                });
-              },
-            ),
-          ),
 
-          // Customer Count
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-            child: Row(
-              children: [
-                Text(
-                  '${_filteredCustomers.length} customers',
-                  style: TextStyle(
-                    color: Colors.grey.shade600,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-                if (_searchQuery.isNotEmpty) ...[
-                  Text(
-                    ' (filtered from ${_customers.length})',
-                    style: TextStyle(color: Colors.grey.shade500, fontSize: 12),
-                  ),
-                ],
-              ],
-            ),
-          ),
-
-          // Customer List
-          Expanded(
-            child: _isLoading
-                ? const Center(child: CircularProgressIndicator())
-                : _filteredCustomers.isEmpty
-                ? Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Icon(
-                          _searchQuery.isNotEmpty
-                              ? Icons.search_off
-                              : Icons.people_outline,
-                          size: 64,
-                          color: Colors.grey.shade400,
-                        ),
-                        const SizedBox(height: 16),
-                        Text(
-                          _searchQuery.isNotEmpty
-                              ? 'No customers found'
-                              : 'No customers yet',
-                          style: TextStyle(
-                            fontSize: 18,
-                            color: Colors.grey.shade600,
-                          ),
-                        ),
-                        if (_searchQuery.isEmpty) ...[
-                          const SizedBox(height: 8),
-                          Text(
-                            'Tap the + button to add your first customer',
-                            style: TextStyle(color: Colors.grey.shade500),
-                          ),
-                        ],
-                      ],
+              // Customer Count
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16.0),
+                child: Row(
+                  children: [
+                    Text(
+                      '${filteredCustomers.length} customers',
+                      style: TextStyle(
+                        color: Colors.grey.shade600,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
-                  )
-                : RefreshIndicator(
-                    onRefresh: _loadCustomers,
-                    child: ListView.builder(
-                      padding: const EdgeInsets.all(16.0),
-                      itemCount: _filteredCustomers.length,
-                      itemBuilder: (context, index) {
-                        final customer = _filteredCustomers[index];
-                        return Card(
-                          margin: const EdgeInsets.only(bottom: 8.0),
-                          child: ListTile(
-                            leading: CircleAvatar(
-                              backgroundColor: Colors.blue.shade100,
-                              child: Text(
-                                customer.firstName.isNotEmpty
-                                    ? customer.firstName[0].toUpperCase()
-                                    : customer.lastName.isNotEmpty
-                                    ? customer.lastName[0].toUpperCase()
-                                    : '?',
-                                style: TextStyle(
-                                  color: Colors.blue.shade700,
-                                  fontWeight: FontWeight.bold,
+                    if (_searchQuery.isNotEmpty) ...[
+                      Text(
+                        ' (filtered from ${catalogProvider.customers.length})',
+                        style: TextStyle(
+                          color: Colors.grey.shade500,
+                          fontSize: 12,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+
+              // Customer List
+              Expanded(
+                child: catalogProvider.isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : filteredCustomers.isEmpty
+                    ? Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              _searchQuery.isNotEmpty
+                                  ? Icons.search_off
+                                  : Icons.people_outline,
+                              size: 64,
+                              color: Colors.grey.shade400,
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              _searchQuery.isNotEmpty
+                                  ? 'No customers found'
+                                  : 'No customers yet',
+                              style: TextStyle(
+                                fontSize: 18,
+                                color: Colors.grey.shade600,
+                              ),
+                            ),
+                            if (_searchQuery.isEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                'Tap the + button to add your first customer',
+                                style: TextStyle(color: Colors.grey.shade500),
+                              ),
+                            ],
+                          ],
+                        ),
+                      )
+                    : RefreshIndicator(
+                        onRefresh: () => catalogProvider.loadAllData(),
+                        child: ListView.builder(
+                          padding: const EdgeInsets.all(16.0),
+                          itemCount: filteredCustomers.length,
+                          itemBuilder: (context, index) {
+                            final customer = filteredCustomers[index];
+                            return Card(
+                              margin: const EdgeInsets.only(bottom: 8.0),
+                              child: ListTile(
+                                leading: CircleAvatar(
+                                  backgroundColor: Colors.blue.shade100,
+                                  child: Text(
+                                    customer.firstName.isNotEmpty
+                                        ? customer.firstName[0].toUpperCase()
+                                        : customer.lastName.isNotEmpty
+                                        ? customer.lastName[0].toUpperCase()
+                                        : '?',
+                                    style: TextStyle(
+                                      color: Colors.blue.shade700,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                            ),
-                            title: Text(
-                              customer.displayName,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            subtitle: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(customer.primaryContact),
-                                Row(
+                                title: Text(
+                                  customer.displayName,
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                                subtitle: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Icon(
-                                      Icons.stars,
-                                      size: 16,
-                                      color: Colors.amber.shade600,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text('${customer.loyaltyPoints} points'),
-                                    const SizedBox(width: 16),
-                                    Icon(
-                                      Icons.attach_money,
-                                      size: 16,
-                                      color: Colors.green.shade600,
-                                    ),
-                                    Text(
-                                      '\$${customer.totalSpent.toStringAsFixed(2)}',
+                                    Text(customer.primaryContact),
+                                    Row(
+                                      children: [
+                                        Icon(
+                                          Icons.stars,
+                                          size: 16,
+                                          color: Colors.amber.shade600,
+                                        ),
+                                        const SizedBox(width: 4),
+                                        Text(
+                                          '${customer.loyaltyPoints} points',
+                                        ),
+                                        const SizedBox(width: 16),
+                                        Icon(
+                                          Icons.attach_money,
+                                          size: 16,
+                                          color: Colors.green.shade600,
+                                        ),
+                                        Text(
+                                          '\$${customer.totalSpent.toStringAsFixed(2)}',
+                                        ),
+                                      ],
                                     ),
                                   ],
                                 ),
-                              ],
-                            ),
-                            trailing: PopupMenuButton(
-                              itemBuilder: (context) => [
-                                const PopupMenuItem(
-                                  value: 'edit',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.edit),
-                                      SizedBox(width: 8),
-                                      Text('Edit'),
-                                    ],
-                                  ),
-                                ),
-                                const PopupMenuItem(
-                                  value: 'delete',
-                                  child: Row(
-                                    children: [
-                                      Icon(Icons.delete, color: Colors.red),
-                                      SizedBox(width: 8),
-                                      Text(
-                                        'Delete',
-                                        style: TextStyle(color: Colors.red),
+                                trailing: PopupMenuButton(
+                                  itemBuilder: (context) => [
+                                    const PopupMenuItem(
+                                      value: 'edit',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.edit),
+                                          SizedBox(width: 8),
+                                          Text('Edit'),
+                                        ],
                                       ),
-                                    ],
-                                  ),
+                                    ),
+                                    const PopupMenuItem(
+                                      value: 'delete',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.delete, color: Colors.red),
+                                          SizedBox(width: 8),
+                                          Text(
+                                            'Delete',
+                                            style: TextStyle(color: Colors.red),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  ],
+                                  onSelected: (value) {
+                                    switch (value) {
+                                      case 'edit':
+                                        _editCustomer(customer);
+                                        break;
+                                      case 'delete':
+                                        _deleteCustomer(customer);
+                                        break;
+                                    }
+                                  },
                                 ),
-                              ],
-                              onSelected: (value) {
-                                switch (value) {
-                                  case 'edit':
-                                    _editCustomer(customer);
-                                    break;
-                                  case 'delete':
-                                    _deleteCustomer(customer);
-                                    break;
-                                }
-                              },
-                            ),
-                            onTap: () => _editCustomer(customer),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
+                                onTap: () => _editCustomer(customer),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+              ),
+            ],
           ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _addCustomer,
-        backgroundColor: Colors.blue.shade700,
-        child: const Icon(Icons.person_add, color: Colors.white),
-      ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: _addCustomer,
+            backgroundColor: Colors.blue.shade700,
+            child: const Icon(Icons.person_add, color: Colors.white),
+          ),
+        );
+      },
     );
   }
 
@@ -359,6 +356,7 @@ class _CustomerEditPageState extends State<CustomerEditPage> {
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
   final _notesController = TextEditingController();
+  final _birthdayController = TextEditingController();
   final _loyaltyPointsController = TextEditingController();
 
   bool _isLoading = false;
@@ -374,6 +372,7 @@ class _CustomerEditPageState extends State<CustomerEditPage> {
       _phoneController.text = widget.customer!.phone ?? '';
       _addressController.text = widget.customer!.address ?? '';
       _notesController.text = widget.customer!.notes ?? '';
+      _birthdayController.text = widget.customer!.birthday ?? '';
       _loyaltyPointsController.text = widget.customer!.loyaltyPoints.toString();
     } else {
       _loyaltyPointsController.text = '0';
@@ -401,6 +400,9 @@ class _CustomerEditPageState extends State<CustomerEditPage> {
         address: _addressController.text.trim().isEmpty
             ? null
             : _addressController.text.trim(),
+        birthday: _birthdayController.text.trim().isEmpty
+            ? null
+            : _birthdayController.text.trim(),
         notes: _notesController.text.trim().isEmpty
             ? null
             : _notesController.text.trim(),
@@ -413,9 +415,15 @@ class _CustomerEditPageState extends State<CustomerEditPage> {
       );
 
       if (_isEditing) {
-        await FirebaseService.saveCustomer(customer);
+        await Provider.of<CatalogProvider>(
+          context,
+          listen: false,
+        ).updateCustomer(customer);
       } else {
-        await FirebaseService.addCustomer(customer);
+        await Provider.of<CatalogProvider>(
+          context,
+          listen: false,
+        ).addCustomer(customer);
       }
 
       if (mounted) {
@@ -551,10 +559,47 @@ class _CustomerEditPageState extends State<CustomerEditPage> {
                       TextFormField(
                         controller: _phoneController,
                         decoration: const InputDecoration(
-                          labelText: 'Phone',
+                          labelText: 'Phone *',
                           border: OutlineInputBorder(),
+                          helperText: 'Required for customer identification',
                         ),
                         keyboardType: TextInputType.phone,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Phone number is required';
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 16),
+                      TextFormField(
+                        controller: _birthdayController,
+                        decoration: const InputDecoration(
+                          labelText: 'Birthday (MM-DD) *',
+                          border: OutlineInputBorder(),
+                          helperText:
+                              'Format: MM-DD (e.g., 03-15 for March 15th)',
+                        ),
+                        keyboardType: TextInputType.datetime,
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Birthday is required for promotions';
+                          }
+                          final birthday = value.trim();
+                          if (!RegExp(r'^\d{2}-\d{2}$').hasMatch(birthday)) {
+                            return 'Please use MM-DD format (e.g., 03-15)';
+                          }
+                          final parts = birthday.split('-');
+                          final month = int.tryParse(parts[0]);
+                          final day = int.tryParse(parts[1]);
+                          if (month == null || month < 1 || month > 12) {
+                            return 'Month must be between 01 and 12';
+                          }
+                          if (day == null || day < 1 || day > 31) {
+                            return 'Day must be between 01 and 31';
+                          }
+                          return null;
+                        },
                       ),
                       const SizedBox(height: 16),
                       TextFormField(

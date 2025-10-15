@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../models/service_order.dart';
 import '../models/service_order_item.dart';
 import '../models/service_catalog.dart';
-import '../models/category.dart';
-import '../models/employee.dart';
-import '../models/customer.dart';
-import '../services/firebase_service.dart';
 
-enum PaymentMethod { cash, credit }
+import '../models/customer.dart';
+import '../provider/service_order_provider.dart';
+import '../provider/catalog_provider.dart';
 
 class ServiceOrderPage extends StatefulWidget {
   final ServiceOrder? existingOrder;
@@ -24,40 +23,14 @@ class ServiceOrderPage extends StatefulWidget {
 }
 
 class _ServiceOrderPageState extends State<ServiceOrderPage> {
-  late ServiceOrder _currentOrder;
-  List<ServiceOrderItem> _orderItems = [];
-  List<ServiceCatalog> _availableServices = [];
-  List<ServiceCatalog> _filteredServices = [];
-  List<Category> _categories = [];
-  List<Employee> _availableEmployees = [];
-  List<Customer> _customers = [];
-  bool _isLoading = true;
-  bool _isSaving = false;
-  Customer? _selectedCustomer;
-  String? _selectedCategoryId;
-  String?
-  _preSelectedTechnicianId; // Track pre-selected technician from dashboard
-  bool _showDiscountSection = false; // Control discount section visibility
-
-  // Payment flow state
-  bool _showPaymentOptions = false;
-  double _amountPaid = 0.0;
-  double _totalPaidSoFar = 0.0;
-  List<double> _partialPayments = [];
-  bool _isProcessingPayment = false;
   final TextEditingController _amountController = TextEditingController();
-
-  // Loyalty points settings
-  double _pointsPerDollar = 1.0;
-  int _loyaltyPointsToEarn = 0;
 
   @override
   void initState() {
     super.initState();
-    _preSelectedTechnicianId = widget.preSelectedTechnicianId;
-    _initializeOrder();
-    _loadData();
-    _loadLoyaltySettings();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeProviders();
+    });
   }
 
   @override
@@ -66,498 +39,103 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     super.dispose();
   }
 
-  // Payment calculation methods
-  double get _remainingBalance {
-    return _total - _totalPaidSoFar;
-  }
+  Future<void> _initializeProviders() async {
+    final serviceOrderProvider = Provider.of<ServiceOrderProvider>(
+      context,
+      listen: false,
+    );
+    final catalogProvider = Provider.of<CatalogProvider>(
+      context,
+      listen: false,
+    );
 
-  double get _changeAmount {
-    return _amountPaid - _remainingBalance;
-  }
+    // Load catalog data first
+    await catalogProvider.loadAllData();
 
-  bool get _isOrderFullyPaid {
-    return _totalPaidSoFar >= _total;
-  }
+    // Initialize order
+    await serviceOrderProvider.initializeOrder(
+      existingOrder: widget.existingOrder,
+      preSelectedTechnicianId: widget.preSelectedTechnicianId,
+    );
 
-  void _initializeOrder() async {
+    // Load existing order items if editing
     if (widget.existingOrder != null) {
-      _currentOrder = widget.existingOrder!;
-    } else {
-      // Generate proper daily sequential order number
-      final orderNumber = await FirebaseService.generateDailyOrderNumber();
-      _currentOrder = ServiceOrder(orderNumber: orderNumber);
-      setState(() {}); // Refresh UI with the new order number
-    }
-  }
-
-  Future<void> _loadData() async {
-    try {
-      final futures = await Future.wait([
-        FirebaseService.getServices(),
-        FirebaseService.getCategories(),
-        FirebaseService.getEmployees(),
-        FirebaseService.getCustomers(),
-        if (widget.existingOrder != null)
-          FirebaseService.getServiceOrderItems(_currentOrder.id!),
-      ]);
-
-      setState(() {
-        _availableServices = futures[0] as List<ServiceCatalog>;
-        _categories = futures[1] as List<Category>;
-        _availableEmployees = futures[2] as List<Employee>;
-        _customers = futures[3] as List<Customer>;
-        if (futures.length > 4) {
-          _orderItems = futures[4] as List<ServiceOrderItem>;
-        }
-
-        // Initialize filtered services
-        _filteredServices = _availableServices;
-
-        // Set selected customer if order has one
-        if (_currentOrder.customerId != null) {
-          _selectedCustomer = _customers.firstWhere(
-            (c) => c.id == _currentOrder.customerId,
-            orElse: () => _customers.first,
-          );
-        }
-
-        _isLoading = false;
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-      });
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error loading data: $e')));
-      }
-    }
-  }
-
-  void _filterServicesByCategory(String? categoryId) {
-    setState(() {
-      _selectedCategoryId = categoryId;
-      if (categoryId == null) {
-        _filteredServices = _availableServices;
-      } else {
-        _filteredServices = _availableServices
-            .where((service) => service.categoryId == categoryId)
-            .toList();
-      }
-    });
-  }
-
-  double get _subtotal {
-    return _orderItems.fold(0.0, (sum, item) => sum + item.lineTotal);
-  }
-
-  double get _total {
-    double subtotal = _subtotal;
-    double discount =
-        _currentOrder.orderDiscount?.calculateDiscount(subtotal) ?? 0.0;
-    return subtotal - discount + _currentOrder.taxAmount;
-  }
-
-  Future<void> _saveOrder() async {
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      // Update order with current items and total
-      final updatedOrder = _currentOrder.copyWith(
-        subtotal: _subtotal,
-        total: _total,
-      );
-
-      if (updatedOrder.id == null) {
-        final orderId = await FirebaseService.addServiceOrder(updatedOrder);
-        _currentOrder = updatedOrder.copyWith(id: orderId);
-      } else {
-        await FirebaseService.saveServiceOrder(updatedOrder);
-        _currentOrder = updatedOrder;
-      }
-
-      // Save all order items
-      for (final item in _orderItems) {
-        final updatedItem = item.copyWith(serviceOrderId: _currentOrder.id!);
-        await FirebaseService.saveServiceOrderItem(updatedItem);
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order saved successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error saving order: $e')));
-      }
-    } finally {
-      setState(() {
-        _isSaving = false;
-      });
-    }
-  }
-
-  Future<void> _saveOrderForLater() async {
-    if (_orderItems.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add at least one service item')),
-      );
-      return;
+      await serviceOrderProvider.loadOrderItems();
     }
 
-    setState(() {
-      _isSaving = true;
-    });
-
-    try {
-      // Save order with "in progress" status for later completion
-      final orderToSave = _currentOrder.copyWith(
-        status: ServiceOrderStatus.inProgress,
-        subtotal: _subtotal,
-        total: _total,
-      );
-
-      if (orderToSave.id == null) {
-        final orderId = await FirebaseService.addServiceOrder(orderToSave);
-        _currentOrder = orderToSave.copyWith(id: orderId);
-      } else {
-        await FirebaseService.saveServiceOrder(orderToSave);
-        _currentOrder = orderToSave;
-      }
-
-      // Save all order items
-      for (final item in _orderItems) {
-        final updatedItem = item.copyWith(serviceOrderId: _currentOrder.id!);
-        await FirebaseService.saveServiceOrderItem(updatedItem);
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Order saved for later completion'),
-            backgroundColor: Colors.blue,
-          ),
-        );
-        // Navigate back to dashboard
-        Navigator.of(context).pop();
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error saving order: $e')));
-      }
-    } finally {
-      setState(() {
-        _isSaving = false;
-      });
-    }
-  }
-
-  // Show delete confirmation dialog
-  void _showDeleteConfirmation() {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          title: const Text('Delete Service Order'),
-          content: Text(
-            'Are you sure you want to delete Order #${_currentOrder.orderNumber}?\n\nThis action cannot be undone.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await _deleteServiceOrder();
-              },
-              style: TextButton.styleFrom(foregroundColor: Colors.red),
-              child: const Text('Delete'),
-            ),
-          ],
-        );
-      },
-    );
-  }
-
-  // Delete service order
-  Future<void> _deleteServiceOrder() async {
-    try {
-      setState(() {
-        _isSaving = true;
-      });
-
-      await FirebaseService.deleteServiceOrder(_currentOrder.id!);
-
-      // Show success message and navigate back
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(
-              'Order #${_currentOrder.orderNumber} deleted successfully',
-            ),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.of(context).pop(); // Go back to previous screen
-      }
-    } catch (e) {
-      print('Error deleting service order: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to delete service order'),
-            backgroundColor: Colors.red,
-          ),
-        );
-      }
-    } finally {
-      setState(() {
-        _isSaving = false;
-      });
-    }
-  }
-
-  // This method is no longer used since we handle payments directly in the main page
-  void _proceedToCheckout() async {
-    // This is now handled by the payment method selection buttons
-    // Left here for compatibility but not actually called
-  }
-
-  // Checkout-related methods
-  Future<void> _loadLoyaltySettings() async {
-    try {
-      final config = await FirebaseService.getLoyaltyPointsConfig();
-      setState(() {
-        _pointsPerDollar = config['pointsPerDollar']?.toDouble() ?? 1.0;
-      });
-      _calculateLoyaltyPoints();
-    } catch (e) {
-      print('Error loading loyalty settings: $e');
-    }
-  }
-
-  void _calculateLoyaltyPoints() {
-    final totalAmount = _total;
-    _loyaltyPointsToEarn = FirebaseService.calculateLoyaltyPoints(
-      totalAmount,
-      _pointsPerDollar,
-    );
-    setState(() {});
-  }
-
-  // Payment methods
-  void _selectPaymentMethod(PaymentMethod method) async {
-    // Save order first
-    await _saveOrder();
-    _calculateLoyaltyPoints();
-
-    if (method == PaymentMethod.cash) {
-      setState(() {
-        _showPaymentOptions = false;
-        _amountPaid = 0.0;
-        _amountController.text = '';
-      });
-      _showCashPaymentModal();
-    } else {
-      // For credit cards, process immediately
-      await _processCardPayment(method);
-    }
-  }
-
-  void _showCashPaymentModal() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Dialog(
-              insetPadding: const EdgeInsets.all(20),
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(
-                  maxWidth: 480,
-                  maxHeight: 850,
-                  minWidth: 400,
-                  minHeight: 500,
-                ),
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      // Header
-                      Row(
-                        children: [
-                          const Icon(
-                            Icons.payments,
-                            color: Colors.green,
-                            size: 28,
-                          ),
-                          const SizedBox(width: 12),
-                          const Text(
-                            'Cash Payment',
-                            style: TextStyle(
-                              fontSize: 24,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            onPressed: () {
-                              setState(() {
-                                _amountPaid = 0.0;
-                                _amountController.clear();
-                              });
-                              Navigator.of(context).pop();
-                            },
-                            icon: const Icon(Icons.close, size: 28),
-                            tooltip: 'Close',
-                          ),
-                        ],
-                      ),
-                      const Divider(thickness: 2),
-                      const SizedBox(height: 16),
-
-                      // Content
-                      Expanded(child: _buildCashCheckoutContent(setModalState)),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
-  }
-
-  Future<void> _processCardPayment(PaymentMethod method) async {
-    setState(() {
-      _isProcessingPayment = true;
-    });
-
-    try {
-      // Update the order with payment information
-      final updatedOrder = _currentOrder.copyWith(
-        status: ServiceOrderStatus.completed,
-        completedAt: DateTime.now(),
-        paymentMethod: method.name,
-        isPaid: true,
-        paidAt: DateTime.now(),
-      );
-
-      await FirebaseService.saveServiceOrder(updatedOrder);
-
-      // Award loyalty points if customer is selected
-      if (_selectedCustomer != null && _loyaltyPointsToEarn > 0) {
-        final finalOrder = updatedOrder.copyWith(
-          loyaltyPointsEarned: _loyaltyPointsToEarn,
-        );
-        await FirebaseService.saveServiceOrder(finalOrder);
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Payment completed with ${method.name}'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.of(context).pop(); // Return to dashboard
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Payment failed: $e')));
-      }
-    } finally {
-      setState(() {
-        _isProcessingPayment = false;
-      });
-    }
+    // Load loyalty settings
+    await serviceOrderProvider.loadLoyaltySettings();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return Scaffold(
-        appBar: AppBar(
-          title: const Text('Service Order'),
-          backgroundColor: Colors.blue.shade700,
-          foregroundColor: Colors.white,
-        ),
-        body: const Center(child: CircularProgressIndicator()),
-      );
-    }
-
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(
-          _currentOrder.id == null
-              ? 'New Service Order'
-              : 'Order ${_currentOrder.orderNumber}',
-        ),
-        backgroundColor: Colors.blue.shade700,
-        foregroundColor: Colors.white,
-        actions: [
-          if (_isSaving)
-            const Padding(
-              padding: EdgeInsets.all(16.0),
-              child: SizedBox(
-                width: 20,
-                height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: Colors.white,
-                ),
-              ),
-            )
-          else ...[
-            // Delete button - only show for existing orders
-            if (_currentOrder.id != null)
-              IconButton(
-                onPressed: _showDeleteConfirmation,
-                icon: const Icon(Icons.delete_outline),
-                tooltip: 'Delete Order',
-              ),
-            // Save button - saves order for later
-            IconButton(
-              onPressed: _saveOrderForLater,
-              icon: const Icon(Icons.save),
-              tooltip: 'Save for Later',
+    return Consumer2<ServiceOrderProvider, CatalogProvider>(
+      builder: (context, orderProvider, catalogProvider, child) {
+        if (orderProvider.isLoading || catalogProvider.isLoading) {
+          return Scaffold(
+            appBar: AppBar(
+              title: const Text('Service Order'),
+              backgroundColor: Colors.blue.shade700,
+              foregroundColor: Colors.white,
             ),
-            // Checkout button - only show if order has items and isn't completed
-            if (_orderItems.isNotEmpty &&
-                _currentOrder.status != ServiceOrderStatus.completed)
-              TextButton.icon(
-                onPressed: _proceedToCheckout,
-                icon: const Icon(Icons.shopping_cart, color: Colors.white),
-                label: const Text(
-                  'Checkout',
-                  style: TextStyle(color: Colors.white),
+            body: const Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        return Scaffold(
+          appBar: AppBar(
+            title: Text(
+              orderProvider.currentOrder?.id == null
+                  ? 'New Service Order'
+                  : 'Order ${orderProvider.currentOrder!.orderNumber}',
+            ),
+            backgroundColor: Colors.blue.shade700,
+            foregroundColor: Colors.white,
+            actions: [
+              if (orderProvider.isSaving)
+                const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  ),
+                )
+              else ...[
+                // Save button
+                IconButton(
+                  onPressed: () => _saveOrderForLater(orderProvider),
+                  icon: const Icon(Icons.save),
+                  tooltip: 'Save for Later',
                 ),
-              ),
-          ],
-        ],
-      ),
-      body: _buildOrderCreationUI(),
+                // Checkout button
+                if (orderProvider.orderItems.isNotEmpty &&
+                    orderProvider.currentOrder?.status !=
+                        ServiceOrderStatus.completed)
+                  TextButton.icon(
+                    onPressed: () => _proceedToCheckout(orderProvider),
+                    icon: const Icon(Icons.shopping_cart, color: Colors.white),
+                    label: const Text(
+                      'Checkout',
+                      style: TextStyle(color: Colors.white),
+                    ),
+                  ),
+              ],
+            ],
+          ),
+          body: _buildOrderCreationUI(orderProvider, catalogProvider),
+        );
+      },
     );
   }
 
-  Widget _buildOrderCreationUI() {
+  Widget _buildOrderCreationUI(
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
     return Row(
       children: [
         // Left side - Service Selection
@@ -566,37 +144,9 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
           child: Column(
             children: [
               // Order Header
-              Container(
-                padding: const EdgeInsets.all(16.0),
-                color: Colors.grey.shade100,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Order #${_currentOrder.orderNumber}',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      'Status: ${_currentOrder.status.name}',
-                      style: TextStyle(
-                        color: _getStatusColor(_currentOrder.status),
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+              _buildOrderHeader(orderProvider, catalogProvider),
 
-              // Technician Selector
-              Container(
-                padding: const EdgeInsets.all(16.0),
-                child: _buildTechnicianSelector(),
-              ),
-
-              // Service Selection
+              // Service Selection Area
               Expanded(
                 child: Container(
                   padding: const EdgeInsets.all(16.0),
@@ -613,43 +163,12 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                       const SizedBox(height: 16),
 
                       // Category Filter Chips
-                      if (_categories.isNotEmpty)
-                        SizedBox(
-                          height: 40,
-                          child: ListView(
-                            scrollDirection: Axis.horizontal,
-                            children: [
-                              FilterChip(
-                                label: const Text('All'),
-                                selected: _selectedCategoryId == null,
-                                onSelected: (selected) {
-                                  if (selected) {
-                                    _filterServicesByCategory(null);
-                                  }
-                                },
-                              ),
-                              const SizedBox(width: 8),
-                              ..._categories.map((category) {
-                                return Padding(
-                                  padding: const EdgeInsets.only(right: 8.0),
-                                  child: FilterChip(
-                                    label: Text(category.name),
-                                    selected:
-                                        _selectedCategoryId == category.id,
-                                    onSelected: (selected) {
-                                      if (selected) {
-                                        _filterServicesByCategory(category.id);
-                                      }
-                                    },
-                                  ),
-                                );
-                              }).toList(),
-                            ],
-                          ),
-                        ),
+                      if (catalogProvider.categories.isNotEmpty)
+                        _buildCategoryFilter(catalogProvider),
+
                       const SizedBox(height: 16),
 
-                      // Service Grid
+                      // Services Grid
                       Expanded(
                         child: GridView.builder(
                           gridDelegate:
@@ -659,10 +178,15 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                                 mainAxisSpacing: 8,
                                 childAspectRatio: 1.2,
                               ),
-                          itemCount: _filteredServices.length,
+                          itemCount: catalogProvider.filteredServices.length,
                           itemBuilder: (context, index) {
-                            final service = _filteredServices[index];
-                            return _buildServiceCard(service);
+                            final service =
+                                catalogProvider.filteredServices[index];
+                            return _buildServiceCard(
+                              service,
+                              orderProvider,
+                              catalogProvider,
+                            );
                           },
                         ),
                       ),
@@ -674,7 +198,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
           ),
         ),
 
-        // Right side - Running Receipt
+        // Right side - Order Summary
         Container(
           width: 350,
           decoration: BoxDecoration(
@@ -687,394 +211,127 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
               ),
             ],
           ),
-          child: Column(
-            children: [
-              // Receipt Header
-              Container(
-                padding: const EdgeInsets.all(16.0),
-                color: Colors.blue.shade700,
-                child: const Row(
-                  children: [
-                    Icon(Icons.receipt, color: Colors.white),
-                    SizedBox(width: 8),
-                    Text(
-                      'Order Receipt',
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-
-              // Receipt Items
-              Expanded(
-                child: Container(
-                  constraints: const BoxConstraints(minHeight: 100),
-                  child: _buildGroupedReceiptItems(),
-                ),
-              ),
-
-              // Receipt Summary
-              Container(
-                padding: const EdgeInsets.all(16.0),
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade50,
-                  border: Border(top: BorderSide(color: Colors.grey.shade300)),
-                ),
-                child: Column(
-                  children: [
-                    // Subtotal
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Subtotal (${_orderItems.length} items):',
-                          style: const TextStyle(fontSize: 14),
-                        ),
-                        Text(
-                          '\$${_subtotal.toStringAsFixed(2)}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-
-                    // Order discount display
-                    if (_currentOrder.orderDiscount != null) ...[
-                      const SizedBox(height: 4),
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Discount (${_currentOrder.orderDiscount!.name}):',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.green.shade600,
-                            ),
-                          ),
-                          Text(
-                            '-\$${_currentOrder.orderDiscount!.calculateDiscount(_subtotal).toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.green.shade600,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-
-                    const SizedBox(height: 8),
-                    const Divider(),
-                    const SizedBox(height: 8),
-
-                    // Total
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total:',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '\$${_total.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Discount Section Toggle
-                    if (!_showDiscountSection) ...[
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: _orderItems.isNotEmpty
-                              ? () =>
-                                    setState(() => _showDiscountSection = true)
-                              : null,
-                          icon: const Icon(Icons.local_offer, size: 16),
-                          label: const Text(
-                            'Apply Discount',
-                            style: TextStyle(fontSize: 14),
-                          ),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.blue.shade100,
-                            foregroundColor: Colors.blue.shade700,
-                            elevation: 0,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                    ] else ...[
-                      // Quick Discount Section
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: Colors.blue.shade200),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Icon(
-                                  Icons.local_offer,
-                                  size: 16,
-                                  color: Colors.blue.shade600,
-                                ),
-                                const SizedBox(width: 8),
-                                const Text(
-                                  'Quick Discounts',
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const Spacer(),
-                                IconButton(
-                                  onPressed: () => setState(
-                                    () => _showDiscountSection = false,
-                                  ),
-                                  icon: const Icon(Icons.close, size: 16),
-                                  tooltip: 'Hide Discounts',
-                                  constraints: const BoxConstraints(
-                                    minWidth: 24,
-                                    minHeight: 24,
-                                  ),
-                                  padding: EdgeInsets.zero,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-
-                            // Percentage presets
-                            const Text(
-                              'Percentage:',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Wrap(
-                              spacing: 6,
-                              children: [
-                                _buildQuickDiscountButton('5%', 5, true),
-                                _buildQuickDiscountButton('10%', 10, true),
-                                _buildQuickDiscountButton('15%', 15, true),
-                                _buildQuickDiscountButton('20%', 20, true),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-
-                            // Fixed amount presets
-                            const Text(
-                              'Fixed Amount:',
-                              style: TextStyle(
-                                fontSize: 12,
-                                fontWeight: FontWeight.w500,
-                              ),
-                            ),
-                            const SizedBox(height: 4),
-                            Wrap(
-                              spacing: 6,
-                              children: [
-                                _buildQuickDiscountButton('\$5', 5, false),
-                                _buildQuickDiscountButton('\$10', 10, false),
-                                _buildQuickDiscountButton('\$20', 20, false),
-                                _buildQuickDiscountButton('\$50', 50, false),
-                              ],
-                            ),
-                            const SizedBox(height: 8),
-
-                            // Apply to options
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: _orderItems.isNotEmpty
-                                        ? () => _showSimpleDiscountDialog(false)
-                                        : null,
-                                    icon: const Icon(Icons.receipt, size: 14),
-                                    label: const Text(
-                                      'Order',
-                                      style: TextStyle(fontSize: 11),
-                                    ),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.green.shade100,
-                                      foregroundColor: Colors.green.shade700,
-                                      elevation: 0,
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(width: 8),
-                                Expanded(
-                                  child: ElevatedButton.icon(
-                                    onPressed: _orderItems.isNotEmpty
-                                        ? () => _showSimpleDiscountDialog(true)
-                                        : null,
-                                    icon: const Icon(Icons.list, size: 14),
-                                    label: const Text(
-                                      'Item',
-                                      style: TextStyle(fontSize: 11),
-                                    ),
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: Colors.orange.shade100,
-                                      foregroundColor: Colors.orange.shade700,
-                                      elevation: 0,
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 8,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-
-                            // Remove discount button if there's an active order discount
-                            if (_currentOrder.orderDiscount != null) ...[
-                              const SizedBox(height: 8),
-                              SizedBox(
-                                width: double.infinity,
-                                child: ElevatedButton.icon(
-                                  onPressed: _removeOrderDiscount,
-                                  icon: const Icon(Icons.clear, size: 14),
-                                  label: const Text(
-                                    'Remove Order Discount',
-                                    style: TextStyle(fontSize: 11),
-                                  ),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.red.shade100,
-                                    foregroundColor: Colors.red.shade700,
-                                    elevation: 0,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 8,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ],
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 16),
-
-                    // Payment Method Selection
-                    if (!_showPaymentOptions) ...[
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton.icon(
-                          onPressed: _orderItems.isNotEmpty
-                              ? () => setState(() => _showPaymentOptions = true)
-                              : null,
-                          icon: const Icon(Icons.payment),
-                          label: const Text('Pay Now'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                    ] else if (_showPaymentOptions) ...[
-                      // Payment Method Buttons
-                      Column(
-                        children: [
-                          const Text(
-                            'Choose Payment Method:',
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: () =>
-                                      _selectPaymentMethod(PaymentMethod.cash),
-                                  icon: const Icon(Icons.payments),
-                                  label: const Text('Cash'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.green.shade600,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 16,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                child: ElevatedButton.icon(
-                                  onPressed: () => _selectPaymentMethod(
-                                    PaymentMethod.credit,
-                                  ),
-                                  icon: const Icon(Icons.credit_card),
-                                  label: const Text('Credit Card'),
-                                  style: ElevatedButton.styleFrom(
-                                    backgroundColor: Colors.blue.shade600,
-                                    foregroundColor: Colors.white,
-                                    padding: const EdgeInsets.symmetric(
-                                      vertical: 16,
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          TextButton(
-                            onPressed: () =>
-                                setState(() => _showPaymentOptions = false),
-                            child: const Text('Cancel'),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
+          child: _buildOrderSummary(orderProvider, catalogProvider),
         ),
       ],
     );
   }
 
-  Widget _buildServiceCard(ServiceCatalog service) {
+  Widget _buildOrderHeader(
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16.0),
+      color: Colors.grey.shade100,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Order #${orderProvider.currentOrder?.orderNumber ?? 'New'}',
+                      style: const TextStyle(
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    if (orderProvider.currentOrder != null)
+                      Text(
+                        'Status: ${orderProvider.currentOrder!.status.displayName}',
+                        style: TextStyle(
+                          color: _getStatusColor(
+                            orderProvider.currentOrder!.status,
+                          ),
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              if (orderProvider.currentOrder != null)
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _getStatusColor(orderProvider.currentOrder!.status),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    orderProvider.currentOrder!.status.displayName
+                        .toUpperCase(),
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          _buildCustomerSearchSection(orderProvider, catalogProvider),
+          const SizedBox(height: 16),
+          _buildTechnicianSelectionSection(orderProvider, catalogProvider),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildCategoryFilter(CatalogProvider catalogProvider) {
+    return SizedBox(
+      height: 40,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          FilterChip(
+            label: const Text('All'),
+            selected: catalogProvider.selectedCategoryId == null,
+            onSelected: (selected) {
+              if (selected) catalogProvider.filterServicesByCategory(null);
+            },
+          ),
+          const SizedBox(width: 8),
+          ...catalogProvider.categories.map((category) {
+            return Padding(
+              padding: const EdgeInsets.only(right: 8.0),
+              child: FilterChip(
+                label: Text(category.name),
+                selected: catalogProvider.selectedCategoryId == category.id,
+                onSelected: (selected) {
+                  if (selected) {
+                    catalogProvider.filterServicesByCategory(category.id);
+                  }
+                },
+              ),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildServiceCard(
+    ServiceCatalog service,
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
     return Card(
       elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
       child: InkWell(
-        onTap: () => _addServiceWithTechnician(service),
+        onTap: () =>
+            _addServiceImmediately(service, orderProvider, catalogProvider),
         borderRadius: BorderRadius.circular(8),
         child: Padding(
-          padding: const EdgeInsets.all(12.0),
+          padding: const EdgeInsets.all(12),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
             children: [
               Row(
                 children: [
@@ -1119,54 +376,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),
-              const Spacer(),
-              Row(
-                children: [
-                  Icon(
-                    Icons.access_time,
-                    size: 12,
-                    color: Colors.grey.shade600,
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${service.durationMinutes} min',
-                    style: TextStyle(fontSize: 10, color: Colors.grey.shade600),
-                  ),
-                  // Show technician indicator if pre-selected
-                  if (_preSelectedTechnicianId != null) ...[
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 4,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.blue.shade100,
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.person,
-                            size: 10,
-                            color: Colors.blue.shade700,
-                          ),
-                          const SizedBox(width: 2),
-                          Text(
-                            'Auto',
-                            style: TextStyle(
-                              fontSize: 8,
-                              color: Colors.blue.shade700,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ],
-              ),
             ],
           ),
         ),
@@ -1174,352 +383,1219 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     );
   }
 
-  Widget _buildGroupedReceiptItems() {
-    // Handle empty state
-    if (_orderItems.isEmpty) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.receipt_long_outlined, size: 64, color: Colors.grey),
-            SizedBox(height: 16),
-            Text(
-              'No items added',
-              style: TextStyle(fontSize: 16, color: Colors.grey),
+  Widget _buildOrderSummary(
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
+    return Column(
+      children: [
+        // Receipt Header
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: Colors.blue.shade700,
+            borderRadius: const BorderRadius.only(
+              topLeft: Radius.circular(0),
+              topRight: Radius.circular(0),
             ),
-            Text(
-              'Select services to add them',
-              style: TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+          child: Row(
+            children: [
+              const Icon(Icons.receipt, color: Colors.white),
+              const SizedBox(width: 8),
+              const Text(
+                'Order Summary',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const Spacer(),
+              Text(
+                'Items: ${orderProvider.orderItems.length}',
+                style: const TextStyle(color: Colors.white),
+              ),
+            ],
+          ),
+        ),
+
+        // Order Items List
+        Expanded(
+          child: orderProvider.orderItems.isEmpty
+              ? const Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        Icons.shopping_cart_outlined,
+                        size: 64,
+                        color: Colors.grey,
+                      ),
+                      SizedBox(height: 16),
+                      Text('No items selected'),
+                      Text('Select services to add to order'),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  itemCount: orderProvider.orderItems.length,
+                  itemBuilder: (context, index) {
+                    final item = orderProvider.orderItems[index];
+                    return _buildOrderItemCard(
+                      item,
+                      index,
+                      orderProvider,
+                      catalogProvider,
+                    );
+                  },
+                ),
+        ),
+
+        // Order Total Section
+        if (orderProvider.orderItems.isNotEmpty)
+          _buildOrderTotals(orderProvider),
+
+        // Payment Section
+        if (orderProvider.showPaymentOptions)
+          _buildPaymentSection(orderProvider),
+      ],
+    );
+  }
+
+  Widget _buildOrderItemCard(
+    ServiceOrderItem item,
+    int index,
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    item.serviceName,
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () => orderProvider.removeOrderItem(index),
+                  icon: const Icon(Icons.close, size: 16, color: Colors.red),
+                  constraints: const BoxConstraints(),
+                  padding: EdgeInsets.zero,
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(children: [Text('Technician: ${item.technicianName}')]),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Text('Qty: ${item.quantity}'),
+                const Spacer(),
+                Text(
+                  '\$${item.lineTotal.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    color: Colors.green,
+                  ),
+                ),
+              ],
             ),
           ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrderTotals(ServiceOrderProvider orderProvider) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade50,
+        border: Border(top: BorderSide(color: Colors.grey.shade300)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Text('Subtotal:', style: TextStyle(fontSize: 16)),
+              const Spacer(),
+              Text(
+                '\$${orderProvider.subtotal.toStringAsFixed(2)}',
+                style: const TextStyle(fontSize: 16),
+              ),
+            ],
+          ),
+          if (orderProvider.discountAmount > 0) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('Discount:', style: TextStyle(fontSize: 16)),
+                const Spacer(),
+                Text(
+                  '-\$${orderProvider.discountAmount.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 16, color: Colors.red),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
+          const Divider(),
+          Row(
+            children: [
+              const Text(
+                'Total:',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              Text(
+                '\$${orderProvider.total.toStringAsFixed(2)}',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green.shade700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (orderProvider.selectedCustomer != null &&
+              orderProvider.loyaltyPointsToEarn > 0)
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.star, color: Colors.orange.shade600, size: 16),
+                  const SizedBox(width: 4),
+                  Text(
+                    'Loyalty Points: +${orderProvider.loyaltyPointsToEarn}',
+                    style: TextStyle(
+                      color: Colors.orange.shade700,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 16),
+          // Checkout and Discount buttons
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: () => _showDiscountDialog(orderProvider),
+                  icon: const Icon(Icons.percent),
+                  label: const Text('Apply Discount'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange.shade600,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: ElevatedButton.icon(
+                  onPressed: orderProvider.orderItems.isNotEmpty
+                      ? () => _proceedToCheckout(orderProvider)
+                      : null,
+                  icon: const Icon(Icons.shopping_cart_checkout),
+                  label: const Text('Proceed to Checkout'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green.shade600,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPaymentSection(ServiceOrderProvider orderProvider) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        border: Border(top: BorderSide(color: Colors.green.shade200)),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Text(
+                'Payment Options',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const Spacer(),
+              IconButton(
+                onPressed: () => orderProvider.togglePaymentOptions(),
+                icon: const Icon(Icons.close, size: 16),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => _showCashPaymentModal(orderProvider),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.green,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Cash'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => _processCreditPayment(orderProvider),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.blue,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Credit'),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // Event Handlers
+  Future<void> _saveOrderForLater(ServiceOrderProvider orderProvider) async {
+    try {
+      await orderProvider.saveOrderForLater();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Order saved successfully!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error saving order: $e')));
+      }
+    }
+  }
+
+  void _proceedToCheckout(ServiceOrderProvider orderProvider) {
+    orderProvider.togglePaymentOptions();
+  }
+
+  void _showDiscountDialog(ServiceOrderProvider orderProvider) {
+    final TextEditingController discountController = TextEditingController();
+    bool isPercentage = true;
+    String displayValue = '0';
+
+    void updateDisplay(String value) {
+      discountController.text = value;
+      displayValue = value;
+    }
+
+    void addDigit(String digit) {
+      if (displayValue == '0') {
+        updateDisplay(digit);
+      } else {
+        updateDisplay(displayValue + digit);
+      }
+    }
+
+    void addDecimal() {
+      if (!displayValue.contains('.')) {
+        updateDisplay(displayValue + '.');
+      }
+    }
+
+    void clearInput() {
+      updateDisplay('0');
+    }
+
+    void removeLastDigit() {
+      if (displayValue.length > 1) {
+        updateDisplay(displayValue.substring(0, displayValue.length - 1));
+      } else {
+        updateDisplay('0');
+      }
+    }
+
+    void applyPresetDiscount(double percentage) {
+      final discountAmount = (orderProvider.subtotal * percentage) / 100;
+      orderProvider.applyDiscount(discountAmount);
+      Navigator.of(context).pop();
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            '$percentage% discount (\$${discountAmount.toStringAsFixed(2)}) applied',
+          ),
+          backgroundColor: Colors.green,
         ),
       );
     }
 
-    // Group items by technician
-    final Map<String, List<ServiceOrderItem>> groupedItems = {};
-    for (final item in _orderItems) {
-      if (!groupedItems.containsKey(item.technicianId)) {
-        groupedItems[item.technicianId] = [];
-      }
-      groupedItems[item.technicianId]!.add(item);
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(16.0),
-      itemCount: groupedItems.length,
-      itemBuilder: (context, groupIndex) {
-        final technicianId = groupedItems.keys.elementAt(groupIndex);
-        final items = groupedItems[technicianId]!;
-        final technicianName = items.first.technicianName;
-        final groupTotal = items.fold(0.0, (sum, item) => sum + item.lineTotal);
-
-        return Container(
-          margin: const EdgeInsets.only(bottom: 16),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: Colors.grey.shade300),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.grey.withOpacity(0.1),
-                spreadRadius: 1,
-                blurRadius: 3,
-                offset: const Offset(0, 2),
-              ),
-            ],
+    showDialog(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => Dialog(
+          insetPadding: const EdgeInsets.symmetric(
+            horizontal: 20,
+            vertical: 40,
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              // Technician Header
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12),
-                    topRight: Radius.circular(12),
-                  ),
-                ),
-                child: Row(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(
+              maxWidth: 520,
+              maxHeight: 950,
+              minWidth: 450,
+              minHeight: 700,
+            ),
+            child: Container(
+              padding: const EdgeInsets.all(20),
+              child: SingleChildScrollView(
+                child: Column(
                   children: [
-                    Icon(Icons.person, color: Colors.blue.shade600, size: 20),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        technicianName,
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue.shade800,
+                    // Header
+                    Row(
+                      children: [
+                        const Text(
+                          'Apply Discount',
+                          style: TextStyle(
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () => Navigator.of(context).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const Divider(),
+
+                    // Preset discount buttons
+                    const Text(
+                      'Quick Discounts',
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
                       ),
                     ),
-                    Text(
-                      '\$${groupTotal.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => applyPresetDiscount(5),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange.shade100,
+                              foregroundColor: Colors.orange.shade800,
+                            ),
+                            child: const Text('5%'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => applyPresetDiscount(10),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange.shade200,
+                              foregroundColor: Colors.orange.shade800,
+                            ),
+                            child: const Text('10%'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () => applyPresetDiscount(15),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.orange.shade300,
+                              foregroundColor: Colors.orange.shade800,
+                            ),
+                            child: const Text('15%'),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Custom discount section
+                    Row(
+                      children: [
+                        const Text('Custom Discount Type:'),
+                        const SizedBox(width: 16),
+                        ChoiceChip(
+                          label: const Text('Percentage'),
+                          selected: isPercentage,
+                          onSelected: (selected) {
+                            setState(() {
+                              isPercentage = true;
+                              clearInput();
+                            });
+                          },
+                        ),
+                        const SizedBox(width: 8),
+                        ChoiceChip(
+                          label: const Text('Amount'),
+                          selected: !isPercentage,
+                          onSelected: (selected) {
+                            setState(() {
+                              isPercentage = false;
+                              clearInput();
+                            });
+                          },
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Display field
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(16),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey),
+                        borderRadius: BorderRadius.circular(8),
                       ),
+                      child: Text(
+                        '${isPercentage ? '' : '\$'}$displayValue${isPercentage ? '%' : ''}',
+                        style: const TextStyle(
+                          fontSize: 24,
+                          fontWeight: FontWeight.bold,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+
+                    // Numpad
+                    SizedBox(
+                      height: 480,
+                      child: GridView.count(
+                        crossAxisCount: 3,
+                        childAspectRatio: 1.4,
+                        mainAxisSpacing: 10,
+                        crossAxisSpacing: 10,
+                        children: [
+                          _buildNumpadButton(
+                            '1',
+                            () => setState(() => addDigit('1')),
+                          ),
+                          _buildNumpadButton(
+                            '2',
+                            () => setState(() => addDigit('2')),
+                          ),
+                          _buildNumpadButton(
+                            '3',
+                            () => setState(() => addDigit('3')),
+                          ),
+                          _buildNumpadButton(
+                            '4',
+                            () => setState(() => addDigit('4')),
+                          ),
+                          _buildNumpadButton(
+                            '5',
+                            () => setState(() => addDigit('5')),
+                          ),
+                          _buildNumpadButton(
+                            '6',
+                            () => setState(() => addDigit('6')),
+                          ),
+                          _buildNumpadButton(
+                            '7',
+                            () => setState(() => addDigit('7')),
+                          ),
+                          _buildNumpadButton(
+                            '8',
+                            () => setState(() => addDigit('8')),
+                          ),
+                          _buildNumpadButton(
+                            '9',
+                            () => setState(() => addDigit('9')),
+                          ),
+                          _buildNumpadButton(
+                            '.',
+                            () => setState(() => addDecimal()),
+                          ),
+                          _buildNumpadButton(
+                            '0',
+                            () => setState(() => addDigit('0')),
+                          ),
+                          _buildNumpadButton(
+                            '⌫',
+                            () => setState(() => removeLastDigit()),
+                            isDelete: true,
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    // Action buttons
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            child: const Text('Cancel'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: TextButton(
+                            onPressed: () {
+                              orderProvider.applyDiscount(0);
+                              Navigator.of(context).pop();
+                            },
+                            child: const Text('Remove Discount'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: ElevatedButton(
+                            onPressed: () {
+                              final input = displayValue;
+                              if (input.isNotEmpty && input != '0') {
+                                final value = double.tryParse(input);
+                                if (value != null && value > 0) {
+                                  double discountAmount;
+                                  if (isPercentage) {
+                                    discountAmount =
+                                        (orderProvider.subtotal * value) / 100;
+                                  } else {
+                                    discountAmount = value;
+                                  }
+
+                                  if (discountAmount > orderProvider.subtotal) {
+                                    discountAmount = orderProvider.subtotal;
+                                  }
+
+                                  orderProvider.applyDiscount(discountAmount);
+                                  Navigator.of(context).pop();
+                                }
+                              }
+                            },
+                            child: const Text('Apply'),
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),
               ),
-              // Services for this technician
-              ...items.asMap().entries.map((entry) {
-                final itemIndex = _orderItems.indexOf(entry.value);
-                return _buildReceiptItem(entry.value, itemIndex);
-              }),
-            ],
+            ),
           ),
+        ),
+      ),
+    );
+  }
+
+  void _addServiceImmediately(
+    ServiceCatalog service,
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
+    // Check if a technician is selected
+    if (orderProvider.selectedTechnicianId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a technician first'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    // Find the selected technician
+    final selectedTechnician = catalogProvider.employees
+        .where((emp) => emp.id == orderProvider.selectedTechnicianId)
+        .firstOrNull;
+
+    if (selectedTechnician == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Selected technician not found'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    // Add service immediately with quantity 1
+    final orderItem = ServiceOrderItem(
+      serviceOrderId: orderProvider.currentOrder?.id ?? '',
+      serviceCatalogId: service.id,
+      serviceName: service.name,
+      serviceDescription: service.description,
+      originalPrice: service.price,
+      quantity: 1, // Default quantity of 1
+      technicianId: selectedTechnician.id,
+      technicianName: selectedTechnician.name,
+      estimatedDurationMinutes: service.durationMinutes,
+    );
+
+    orderProvider.addOrderItem(orderItem);
+  }
+
+  void _showCashPaymentModal(ServiceOrderProvider orderProvider) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return Dialog(
+              insetPadding: const EdgeInsets.all(20),
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 480,
+                  maxHeight: 800,
+                  minWidth: 400,
+                  minHeight: 600,
+                ),
+                child: Container(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      // Header
+                      Row(
+                        children: [
+                          const Text(
+                            'Cash Payment',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          const Spacer(),
+                          IconButton(
+                            onPressed: () => Navigator.of(context).pop(),
+                            icon: const Icon(Icons.close),
+                          ),
+                        ],
+                      ),
+                      const Divider(),
+
+                      // Order total display
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: Colors.grey.shade100,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            const Text(
+                              'Total Due:',
+                              style: TextStyle(fontSize: 18),
+                            ),
+                            Text(
+                              '\$${orderProvider.total.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Amount received display
+                      Container(
+                        padding: const EdgeInsets.all(20),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          border: Border.all(color: Colors.grey.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Column(
+                          children: [
+                            const Text(
+                              'Amount Received',
+                              style: TextStyle(fontSize: 16),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '\$${orderProvider.amountPaid.toStringAsFixed(2)}',
+                              style: const TextStyle(
+                                fontSize: 32,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            if (orderProvider.amountPaid >= orderProvider.total)
+                              Text(
+                                'Change: \$${orderProvider.changeAmount.toStringAsFixed(2)}',
+                                style: const TextStyle(
+                                  fontSize: 16,
+                                  color: Colors.green,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Number pad
+                      Expanded(
+                        child: _buildModalNumPad(setModalState, orderProvider),
+                      ),
+
+                      const SizedBox(height: 20),
+
+                      // Pay Exact Amount button
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: () =>
+                              _payExactAmount(setModalState, orderProvider),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue.shade100,
+                            foregroundColor: Colors.blue.shade800,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                          child: Text(
+                            'Pay Exact Amount (\$${orderProvider.total.toStringAsFixed(2)})',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Action buttons
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              child: const Text('Cancel'),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed:
+                                  orderProvider.amountPaid >=
+                                      orderProvider.total
+                                  ? () =>
+                                        _handlePaymentCompletion(orderProvider)
+                                  : null,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.green,
+                                foregroundColor: Colors.white,
+                              ),
+                              child: const Text('Complete Payment'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
         );
       },
     );
   }
 
-  Widget _buildReceiptItem(ServiceOrderItem item, int index) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  item.serviceName,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 14,
+  Widget _buildModalNumPad(
+    StateSetter setModalState,
+    ServiceOrderProvider orderProvider,
+  ) {
+    return Column(
+      children: [
+        // Row 1: 1, 2, 3
+        Row(
+          children: [
+            Expanded(
+              child: _buildModalNumButton('1', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModalNumButton('2', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModalNumButton('3', setModalState, orderProvider),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Row 2: 4, 5, 6
+        Row(
+          children: [
+            Expanded(
+              child: _buildModalNumButton('4', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModalNumButton('5', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModalNumButton('6', setModalState, orderProvider),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Row 3: 7, 8, 9
+        Row(
+          children: [
+            Expanded(
+              child: _buildModalNumButton('7', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModalNumButton('8', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModalNumButton('9', setModalState, orderProvider),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        // Row 4: 0, 00, Delete
+        Row(
+          children: [
+            Expanded(
+              child: _buildModalNumButton('0', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: _buildModalNumButton('00', setModalState, orderProvider),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: SizedBox(
+                height: 60,
+                child: ElevatedButton(
+                  onPressed: orderProvider.amountPaid > 0
+                      ? () =>
+                            _modalBackspaceAmount(setModalState, orderProvider)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: orderProvider.amountPaid > 0
+                        ? Colors.red.shade100
+                        : Colors.grey.shade200,
+                    foregroundColor: orderProvider.amountPaid > 0
+                        ? Colors.red.shade700
+                        : Colors.grey.shade500,
                   ),
+                  child: const Icon(Icons.backspace, size: 24),
                 ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, size: 18),
-                onPressed: () => _removeOrderItem(index),
-                color: Colors.red.shade600,
-              ),
-            ],
-          ),
-          if (item.itemDiscount != null) ...[
-            const SizedBox(height: 4),
-            Text(
-              'Discount: ${item.itemDiscount!.name} (-\$${item.itemDiscount!.calculateDiscount(item.originalPrice).toStringAsFixed(2)})',
-              style: TextStyle(
-                fontSize: 11,
-                color: Colors.green.shade600,
-                fontStyle: FontStyle.italic,
               ),
             ),
           ],
-          const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '${item.quantity}x \$${item.originalPrice.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      decoration: item.itemDiscount != null
-                          ? TextDecoration.lineThrough
-                          : null,
-                      color: item.itemDiscount != null
-                          ? Colors.grey.shade600
-                          : null,
-                    ),
+        ),
+        const SizedBox(height: 12),
+        // Clear button
+        Row(
+          children: [
+            Expanded(
+              child: SizedBox(
+                height: 50,
+                child: ElevatedButton(
+                  onPressed: orderProvider.amountPaid > 0
+                      ? () => _modalClearAmount(setModalState, orderProvider)
+                      : null,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: orderProvider.amountPaid > 0
+                        ? Colors.orange.shade100
+                        : Colors.grey.shade200,
+                    foregroundColor: orderProvider.amountPaid > 0
+                        ? Colors.orange.shade700
+                        : Colors.grey.shade500,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
-                  if (item.itemDiscount != null)
-                    Text(
-                      '${item.quantity}x \$${item.finalPrice.toStringAsFixed(2)}',
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                ],
-              ),
-              Text(
-                '\$${item.lineTotal.toStringAsFixed(2)}',
-                style: const TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green,
+                  child: const Text(
+                    'Clear All',
+                    style: TextStyle(fontWeight: FontWeight.bold),
+                  ),
                 ),
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildModalNumButton(
+    String value,
+    StateSetter setModalState,
+    ServiceOrderProvider orderProvider,
+  ) {
+    return SizedBox(
+      height: 60,
+      child: ElevatedButton(
+        onPressed: () => _modalAddToAmount(value, setModalState, orderProvider),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black87,
+          elevation: 2,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(8),
+            side: BorderSide(color: Colors.grey.shade300),
+          ),
+        ),
+        child: Text(
+          value,
+          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+        ),
+      ),
+    );
+  }
+
+  void _modalAddToAmount(
+    String value,
+    StateSetter setModalState,
+    ServiceOrderProvider orderProvider,
+  ) {
+    String currentAmount = orderProvider.amountPaid
+        .toStringAsFixed(2)
+        .replaceAll('.00', '');
+    if (currentAmount == '0') currentAmount = '';
+
+    String newAmount = currentAmount + value;
+    double amount = double.tryParse(newAmount) ?? 0.0;
+
+    orderProvider.setAmountPaid(amount);
+    setModalState(() {});
+  }
+
+  void _modalBackspaceAmount(
+    StateSetter setModalState,
+    ServiceOrderProvider orderProvider,
+  ) {
+    String currentAmount = orderProvider.amountPaid
+        .toStringAsFixed(2)
+        .replaceAll('.00', '');
+    if (currentAmount.isNotEmpty) {
+      String newAmount = currentAmount.substring(0, currentAmount.length - 1);
+      double amount = double.tryParse(newAmount) ?? 0.0;
+      orderProvider.setAmountPaid(amount);
+      setModalState(() {});
+    }
+  }
+
+  void _modalClearAmount(
+    StateSetter setModalState,
+    ServiceOrderProvider orderProvider,
+  ) {
+    orderProvider.setAmountPaid(0.0);
+    setModalState(() {});
+  }
+
+  Widget _buildNumpadButton(
+    String value,
+    VoidCallback onPressed, {
+    bool isDelete = false,
+  }) {
+    return ElevatedButton(
+      onPressed: onPressed,
+      style: ElevatedButton.styleFrom(
+        backgroundColor: isDelete ? Colors.red.shade100 : Colors.white,
+        foregroundColor: isDelete ? Colors.red.shade700 : Colors.black87,
+        elevation: 2,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+          side: BorderSide(color: Colors.grey.shade300),
+        ),
+      ),
+      child: isDelete
+          ? const Icon(Icons.backspace, size: 20)
+          : Text(
+              value,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+    );
+  }
+
+  void _payExactAmount(
+    StateSetter setModalState,
+    ServiceOrderProvider orderProvider,
+  ) {
+    orderProvider.setAmountPaid(orderProvider.total);
+    setModalState(() {});
+  }
+
+  Future<void> _handlePaymentCompletion(
+    ServiceOrderProvider orderProvider,
+  ) async {
+    // Check if change is required and show confirmation dialog
+    if (orderProvider.changeAmount > 0.01) {
+      final confirmed = await _showChangeConfirmationDialog(
+        orderProvider.changeAmount,
+      );
+      if (!confirmed) return;
+    }
+
+    // Close the payment modal
+    Navigator.of(context).pop();
+
+    try {
+      await orderProvider.completeOrder();
+      orderProvider.addPartialPayment(orderProvider.amountPaid);
+
+      if (mounted) {
+        // Show change dialog if needed
+        if (orderProvider.changeAmount > 0.01) {
+          _showChangeDialog(orderProvider.changeAmount);
+        }
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Payment completed successfully!')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Error completing payment: $e')));
+      }
+    }
+  }
+
+  Future<bool> _showChangeConfirmationDialog(double changeAmount) async {
+    return await showDialog<bool>(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: Row(
+              children: [
+                Icon(Icons.warning, color: Colors.orange.shade600),
+                const SizedBox(width: 8),
+                const Text('Confirm Payment'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text(
+                  'The customer paid more than the total amount.',
+                  style: TextStyle(fontSize: 16),
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Change Due:',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        '\$${changeAmount.toStringAsFixed(2)}',
+                        style: TextStyle(
+                          fontSize: 32,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange.shade700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text(
+                  'Please confirm that you will give the correct change to the customer.',
+                  style: TextStyle(fontSize: 14),
+                  textAlign: TextAlign.center,
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white,
+                ),
+                child: const Text('Confirm & Complete'),
               ),
             ],
           ),
-        ],
+        ) ??
+        false;
+  }
+
+  void _processCreditPayment(ServiceOrderProvider orderProvider) {
+    // Placeholder for credit payment processing
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Credit payment processing not implemented yet'),
       ),
     );
   }
 
-  Widget _buildTechnicianSelector() {
-    final currentTechnician = _preSelectedTechnicianId != null
-        ? _availableEmployees.firstWhere(
-            (emp) => emp.id == _preSelectedTechnicianId,
-            orElse: () => _availableEmployees.first,
-          )
-        : null;
-
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.blue.shade200),
-      ),
-      child: Row(
-        children: [
-          Icon(Icons.person, color: Colors.blue.shade600, size: 20),
-          const SizedBox(width: 8),
-          Text(
-            'Selected Technician: ',
-            style: TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w500,
-              color: Colors.blue.shade800,
+  void _showChangeDialog(double changeAmount) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Change Due'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.account_balance_wallet,
+              size: 64,
+              color: Colors.green,
             ),
-          ),
-          Expanded(
-            child: Text(
-              currentTechnician?.name ?? 'None',
-              style: TextStyle(
-                fontSize: 14,
+            const SizedBox(height: 16),
+            Text(
+              '\$${changeAmount.toStringAsFixed(2)}',
+              style: const TextStyle(
+                fontSize: 48,
                 fontWeight: FontWeight.bold,
-                color: Colors.blue.shade900,
+                color: Colors.green,
               ),
             ),
-          ),
-          TextButton(
-            onPressed: _showTechnicianChangeDialog,
-            child: const Text('Change'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showTechnicianChangeDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Technician'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: _availableEmployees.length,
-            itemBuilder: (context, index) {
-              final employee = _availableEmployees[index];
-              return RadioListTile<String>(
-                title: Text(employee.name),
-                value: employee.id,
-                groupValue: _preSelectedTechnicianId,
-                onChanged: (value) {
-                  setState(() {
-                    _preSelectedTechnicianId = value;
-                  });
-                  Navigator.of(context).pop();
-                },
-              );
-            },
-          ),
+            const SizedBox(height: 16),
+            const Text('Please give this amount to the customer'),
+          ],
         ),
         actions: [
-          TextButton(
+          ElevatedButton(
             onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _addServiceWithTechnician(ServiceCatalog service) {
-    // If there's a pre-selected technician, use it directly
-    if (_preSelectedTechnicianId != null) {
-      final preSelectedEmployee = _availableEmployees.firstWhere(
-        (emp) => emp.id == _preSelectedTechnicianId,
-        orElse: () => _availableEmployees.first,
-      );
-      _addServiceOrderItem(
-        service,
-        preSelectedEmployee,
-        1,
-      ); // Default quantity of 1
-      return;
-    }
-
-    // Otherwise, show technician selection dialog
-    showDialog(
-      context: context,
-      builder: (context) => _TechnicianSelectionDialog(
-        service: service,
-        availableEmployees: _availableEmployees,
-        onAdd: (employee, quantity) {
-          _addServiceOrderItem(service, employee, quantity);
-        },
-      ),
-    );
-  }
-
-  void _addServiceOrderItem(
-    ServiceCatalog service,
-    Employee employee,
-    int quantity,
-  ) {
-    final item = ServiceOrderItem(
-      id: DateTime.now().millisecondsSinceEpoch.toString(),
-      serviceOrderId: _currentOrder.id ?? '',
-      serviceCatalogId: service.id,
-      serviceName: service.name,
-      serviceDescription: service.description,
-      originalPrice: service.price,
-      quantity: quantity,
-      technicianId: employee.id,
-      technicianName: employee.name,
-      discountAmount: 0.0,
-      status: ServiceOrderItemStatus.pending,
-      createdAt: DateTime.now(),
-    );
-
-    setState(() {
-      _orderItems.add(item);
-    });
-  }
-
-  void _removeOrderItem(int index) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove Item'),
-        content: Text(
-          'Are you sure you want to remove "${_orderItems[index].serviceName}" from this order?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _orderItems.removeAt(index);
-              });
-              Navigator.of(context).pop();
-            },
-            child: const Text('Remove'),
+            child: const Text('OK'),
           ),
         ],
       ),
@@ -1539,794 +1615,95 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     }
   }
 
-  Widget _buildQuickDiscountButton(
-    String label,
-    double amount,
-    bool isPercentage,
+  Widget _buildCustomerSearchSection(
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
   ) {
-    return SizedBox(
-      height: 32,
-      child: ElevatedButton(
-        onPressed: () => _applyQuickDiscount(amount, isPercentage),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.blue.shade100,
-          foregroundColor: Colors.blue.shade700,
-          elevation: 0,
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-        ),
-        child: Text(
-          label,
-          style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
-        ),
-      ),
-    );
-  }
-
-  void _applyQuickDiscount(double amount, bool isPercentage) {
-    if (_orderItems.isEmpty) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text(
-          'Apply ${isPercentage ? "$amount%" : "\$${amount.toStringAsFixed(0)}"} Discount',
-        ),
-        content: const Text('Where would you like to apply this discount?'),
-        actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _applyOrderDiscount(amount, isPercentage);
-            },
-            child: const Text('Entire Order'),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context);
-              _showItemSelectionForDiscount(amount, isPercentage);
-            },
-            child: const Text('Select Item'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _applyOrderDiscount(double amount, bool isPercentage) {
-    setState(() {
-      _currentOrder = _currentOrder.copyWith(
-        orderDiscount: ServiceOrderDiscount(
-          name: isPercentage
-              ? '$amount% Off'
-              : '\$${amount.toStringAsFixed(0)} Off',
-          type: isPercentage
-              ? DiscountType.percentage
-              : DiscountType.fixedAmount,
-          value: amount,
-        ),
-      );
-    });
-  }
-
-  void _removeOrderDiscount() {
-    setState(() {
-      _currentOrder = _currentOrder.copyWith(orderDiscount: null);
-    });
-  }
-
-  void _showItemSelectionForDiscount(double amount, bool isPercentage) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Select Item for Discount'),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: ListView.builder(
-            shrinkWrap: true,
-            itemCount: _orderItems.length,
-            itemBuilder: (context, index) {
-              final item = _orderItems[index];
-              return ListTile(
-                title: Text(item.serviceName),
-                subtitle: Text('\$${item.originalPrice.toStringAsFixed(2)}'),
-                onTap: () {
-                  Navigator.pop(context);
-                  _applyItemDiscount(index, amount, isPercentage);
-                },
-              );
-            },
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Customer Selection',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.blue.shade800,
           ),
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _applyItemDiscount(int itemIndex, double amount, bool isPercentage) {
-    setState(() {
-      _orderItems[itemIndex] = _orderItems[itemIndex].copyWith(
-        itemDiscount: ServiceOrderItemDiscount(
-          name: isPercentage
-              ? '$amount% Off'
-              : '\$${amount.toStringAsFixed(0)} Off',
-          type: isPercentage
-              ? DiscountType.percentage
-              : DiscountType.fixedAmount,
-          value: amount,
-        ),
-      );
-    });
-  }
-
-  void _showSimpleDiscountDialog(bool forItem) {
-    double discountAmount = 0;
-    bool isPercentage = true;
-
-    showDialog(
-      context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text(forItem ? 'Apply Item Discount' : 'Apply Order Discount'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: RadioListTile<bool>(
-                      title: const Text('Percentage'),
-                      value: true,
-                      groupValue: isPercentage,
-                      onChanged: (value) {
-                        setDialogState(() {
-                          isPercentage = value!;
-                        });
-                      },
-                    ),
-                  ),
-                  Expanded(
-                    child: RadioListTile<bool>(
-                      title: const Text('Fixed Amount'),
-                      value: false,
-                      groupValue: isPercentage,
-                      onChanged: (value) {
-                        setDialogState(() {
-                          isPercentage = value!;
-                        });
-                      },
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 16),
-              TextFormField(
-                decoration: InputDecoration(
-                  labelText: isPercentage ? 'Percentage (%)' : 'Amount (\$)',
-                  border: const OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                onChanged: (value) {
-                  discountAmount = double.tryParse(value) ?? 0;
-                },
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('Cancel'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                if (forItem) {
-                  _showItemSelectionForDiscount(discountAmount, isPercentage);
-                } else {
-                  _applyOrderDiscount(discountAmount, isPercentage);
-                }
-              },
-              child: const Text('Apply'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  // Cash payment modal content
-  Widget _buildCashCheckoutContent(StateSetter setModalState) {
-    return SingleChildScrollView(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Order Summary
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      _totalPaidSoFar > 0 ? 'Remaining:' : 'Total Due:',
-                      style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '\$${_remainingBalance.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 24,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-                if (_totalPaidSoFar > 0) ...[
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Already Paid: \$${_totalPaidSoFar.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 14,
-                          color: Colors.green.shade600,
-                        ),
-                      ),
-                      Text(
-                        'Total: \$${_total.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 20),
-
-          // Partial Payments History
-          if (_partialPayments.isNotEmpty) ...[
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green.shade200),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.payments,
-                        color: Colors.green.shade600,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Partial Payments Made',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  ...List.generate(_partialPayments.length, (index) {
-                    final payment = _partialPayments[index];
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 8),
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(8),
-                        border: Border.all(color: Colors.green.shade300),
-                      ),
-                      child: Row(
-                        children: [
-                          Text(
-                            'Payment ${index + 1}:',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Text(
-                            '\$${payment.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                          const Spacer(),
-                          IconButton(
+        const SizedBox(height: 8),
+        // Combined search and selection field
+        Autocomplete<Customer>(
+          optionsBuilder: (TextEditingValue textEditingValue) {
+            if (textEditingValue.text.isEmpty) {
+              return catalogProvider.customers;
+            }
+            final query = textEditingValue.text.toLowerCase();
+            return catalogProvider.customers.where((customer) {
+              return customer.displayName.toLowerCase().contains(query) ||
+                  (customer.phone?.contains(query) ?? false);
+            });
+          },
+          displayStringForOption: (Customer customer) => customer.displayName,
+          onSelected: (Customer customer) {
+            orderProvider.setSelectedCustomer(customer);
+          },
+          fieldViewBuilder:
+              (context, controller, focusNode, onEditingComplete) {
+                return TextFormField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  onEditingComplete: onEditingComplete,
+                  decoration: InputDecoration(
+                    labelText: 'Search or Select Customer',
+                    border: const OutlineInputBorder(),
+                    prefixIcon: const Icon(Icons.search),
+                    hintText: 'Type name or phone number',
+                    suffixIcon: orderProvider.selectedCustomer != null
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
                             onPressed: () {
-                              setModalState(() {
-                                setState(() {
-                                  _totalPaidSoFar -= _partialPayments[index];
-                                  _partialPayments.removeAt(index);
-                                });
-                              });
+                              orderProvider.setSelectedCustomer(null);
+                              controller.clear();
                             },
-                            icon: Icon(
-                              Icons.close,
-                              size: 18,
-                              color: Colors.red.shade600,
-                            ),
-                            tooltip: 'Remove payment',
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                  const SizedBox(height: 12),
-                  if (_partialPayments.length > 1)
-                    SizedBox(
-                      width: double.infinity,
-                      child: ElevatedButton.icon(
-                        onPressed: () {
-                          setModalState(() {
-                            setState(() {
-                              _totalPaidSoFar = 0.0;
-                              _partialPayments.clear();
-                            });
-                          });
-                        },
-                        icon: const Icon(Icons.clear_all, size: 16),
-                        label: const Text('Clear All Payments'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.red.shade100,
-                          foregroundColor: Colors.red.shade700,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 20),
-          ],
-
-          // Cash Amount Input
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue.shade300, width: 2),
-            ),
-            child: Column(
-              children: [
-                const Text(
-                  'Cash Tendered',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w500,
-                    color: Colors.grey,
+                          )
+                        : null,
                   ),
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  '\$${_amountPaid.toStringAsFixed(2)}',
-                  style: TextStyle(
-                    fontSize: 36,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.blue.shade700,
-                  ),
-                ),
-                if (_amountPaid >= _remainingBalance && _amountPaid > 0) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.green.shade100,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'Change: \$${_changeAmount.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green.shade700,
-                      ),
-                    ),
-                  ),
-                ] else if (_amountPaid > 0 &&
-                    _amountPaid < _remainingBalance) ...[
-                  const SizedBox(height: 12),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 16,
-                      vertical: 8,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.orange.shade100,
-                      borderRadius: BorderRadius.circular(20),
-                    ),
-                    child: Text(
-                      'Need: \$${(_remainingBalance - _amountPaid).toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange.shade700,
-                      ),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 20),
-
-                // Number pad
-                _buildModalNumPad(setModalState),
-                const SizedBox(height: 20),
-
-                // Quick amount buttons
-                Row(
-                  children: [
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed: () {
-                          setModalState(() {
-                            setState(() {
-                              _amountPaid = _remainingBalance;
-                              _amountController.text = _remainingBalance
-                                  .toStringAsFixed(2);
-                            });
-                          });
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green.shade100,
-                          foregroundColor: Colors.green.shade700,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        child: Text(
-                          'Pay Exact (\$${_remainingBalance.toStringAsFixed(2)})',
-                          style: const TextStyle(fontWeight: FontWeight.bold),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-
-                // Action buttons
-                Row(
-                  children: [
-                    if (_amountPaid > 0 && _amountPaid < _remainingBalance) ...[
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: _isProcessingPayment
-                              ? null
-                              : () {
-                                  setModalState(() {
-                                    setState(() {
-                                      _partialPayments.add(_amountPaid);
-                                      _totalPaidSoFar += _amountPaid;
-                                      _amountPaid = 0.0;
-                                      _amountController.clear();
-                                    });
-                                  });
-                                },
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange.shade600,
-                            padding: const EdgeInsets.symmetric(vertical: 16),
-                          ),
-                          child: Text(
-                            'Add Partial Payment',
-                            style: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                    ],
-                    Expanded(
-                      child: ElevatedButton(
-                        onPressed:
-                            _isProcessingPayment ||
-                                (_amountPaid <= 0 ||
-                                    (_amountPaid < _remainingBalance &&
-                                        !_isOrderFullyPaid))
-                            ? null
-                            : () async {
-                                await _processCashPayment();
-                                Navigator.of(context).pop();
-                              },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.green.shade600,
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                        ),
-                        child: _isProcessingPayment
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child: CircularProgressIndicator(
-                                  strokeWidth: 2,
-                                  color: Colors.white,
-                                ),
-                              )
-                            : Text(
-                                _isOrderFullyPaid
-                                    ? 'Complete Order'
-                                    : 'Complete Payment',
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontWeight: FontWeight.bold,
-                                ),
-                              ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Cash checkout methods
-  Widget _buildCashCheckoutSection() {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.blue.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.blue.shade200, width: 2),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header
-          Row(
-            children: [
-              const Icon(Icons.payments, color: Colors.green),
-              const SizedBox(width: 8),
-              const Text(
-                'Cash Payment',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-              const Spacer(),
-              IconButton(
-                onPressed: () {
-                  setState(() {
-                    _showPaymentOptions = false;
-                    _amountPaid = 0.0;
-                    _amountController.clear();
-                  });
-                },
-                icon: const Icon(Icons.close),
-                tooltip: 'Cancel Payment',
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-
-          // Order Summary (Compact)
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade100,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: Column(
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text(
-                      _totalPaidSoFar > 0 ? 'Remaining:' : 'Total Due:',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      '\$${_remainingBalance.toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange.shade700,
-                      ),
-                    ),
-                  ],
-                ),
-                if (_totalPaidSoFar > 0) ...[
-                  const SizedBox(height: 4),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Already Paid: \$${_totalPaidSoFar.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 12,
-                          color: Colors.green.shade600,
-                        ),
-                      ),
-                      Text(
-                        'Total: \$${_total.toStringAsFixed(2)}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          color: Colors.grey,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Partial Payments History
-          if (_partialPayments.isNotEmpty) ...[
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
+                );
+              },
+          optionsViewBuilder: (context, onSelected, options) {
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 4.0,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.green.shade200),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxHeight: 200,
+                    maxWidth: 300,
+                  ),
+                  child: ListView.builder(
+                    padding: EdgeInsets.zero,
+                    shrinkWrap: true,
+                    itemCount: options.length,
+                    itemBuilder: (context, index) {
+                      final customer = options.elementAt(index);
+                      return ListTile(
+                        leading: const Icon(Icons.person),
+                        title: Text(customer.displayName),
+                        subtitle: Text(customer.phone ?? 'No phone'),
+                        trailing: Text('${customer.loyaltyPoints} pts'),
+                        onTap: () => onSelected(customer),
+                      );
+                    },
+                  ),
+                ),
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        Icons.payments,
-                        color: Colors.green.shade600,
-                        size: 18,
-                      ),
-                      const SizedBox(width: 8),
-                      const Text(
-                        'Partial Payments Made',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  ...List.generate(_partialPayments.length, (index) {
-                    final payment = _partialPayments[index];
-                    return Container(
-                      margin: const EdgeInsets.only(bottom: 4),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(6),
-                        border: Border.all(color: Colors.green.shade300),
-                      ),
-                      child: Row(
-                        children: [
-                          Text(
-                            'Payment ${index + 1}:',
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w500,
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            '\$${payment.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                          const Spacer(),
-                          IconButton(
-                            onPressed: () => _removePartialPayment(index),
-                            icon: Icon(
-                              Icons.close,
-                              size: 16,
-                              color: Colors.red.shade600,
-                            ),
-                            constraints: const BoxConstraints(
-                              minWidth: 24,
-                              minHeight: 24,
-                            ),
-                            padding: EdgeInsets.zero,
-                            tooltip: 'Remove payment',
-                          ),
-                        ],
-                      ),
-                    );
-                  }),
-                  const SizedBox(height: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 8,
-                      vertical: 4,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.green.shade100,
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text(
-                          'Total Paid So Far:',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Text(
-                          '\$${_totalPaidSoFar.toStringAsFixed(2)}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green.shade700,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: ElevatedButton.icon(
-                      onPressed: _clearAllPartialPayments,
-                      icon: const Icon(Icons.clear_all, size: 16),
-                      label: const Text(
-                        'Clear All Payments',
-                        style: TextStyle(fontSize: 12),
-                      ),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.red.shade100,
-                        foregroundColor: Colors.red.shade700,
-                        elevation: 0,
-                        padding: const EdgeInsets.symmetric(vertical: 8),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-          ],
-
-          // Exact Amount Button
+            );
+          },
+        ),
+        const SizedBox(height: 8),
+        // Selected customer display with loyalty points
+        if (orderProvider.selectedCustomer != null)
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
@@ -2334,862 +1711,248 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(color: Colors.green.shade200),
             ),
-            child: SizedBox(
-              width: double.infinity,
-              child: ElevatedButton(
-                onPressed: () => _setAmount(_remainingBalance),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green.shade100,
-                  foregroundColor: Colors.green.shade700,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                ),
-                child: Text(
-                  _totalPaidSoFar > 0
-                      ? 'Pay Remaining (\$${_remainingBalance.toStringAsFixed(2)})'
-                      : 'Pay Exact Amount (\$${_total.toStringAsFixed(2)})',
-                  style: const TextStyle(fontWeight: FontWeight.bold),
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Cash Input with Live Display
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.blue.shade300, width: 2),
-            ),
-            child: Column(
+            child: Row(
               children: [
-                // Live Cash Amount Display
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.blue.shade300, width: 2),
-                  ),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'Cash Tendered',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w500,
-                          color: Colors.grey,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '\$${_amountPaid.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue.shade700,
-                        ),
-                      ),
-                      if (_amountPaid >= _remainingBalance &&
-                          _amountPaid > 0) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.green.shade100,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            'Change: \$${_changeAmount.toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                        ),
-                      ] else if (_amountPaid > 0 &&
-                          _amountPaid < _remainingBalance) ...[
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 12,
-                            vertical: 4,
-                          ),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade100,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            'Need: \$${(_remainingBalance - _amountPaid).toStringAsFixed(2)}',
-                            style: TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.orange.shade700,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-
-                // On-Screen Keypad
-                const Text(
-                  'Enter Amount',
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.grey,
-                  ),
-                ),
-                const SizedBox(height: 12),
-
-                // Number pad grid
-                _buildNumPad(),
-              ],
-            ),
-          ),
-          const SizedBox(height: 16),
-
-          // Action Buttons
-          Row(
-            children: [
-              if (_amountPaid > 0 && _amountPaid < _remainingBalance) ...[
+                const Icon(Icons.person, color: Colors.green),
+                const SizedBox(width: 8),
                 Expanded(
-                  child: ElevatedButton(
-                    onPressed: _isProcessingPayment
-                        ? null
-                        : () => _addPartialPayment(_amountPaid),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orange.shade600,
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                    ),
-                    child: Text(
-                      'Add Partial Payment (\$${_amountPaid.toStringAsFixed(2)})',
-                      style: const TextStyle(color: Colors.white),
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-              ],
-              Expanded(
-                child: ElevatedButton(
-                  onPressed:
-                      _isProcessingPayment ||
-                          (_amountPaid <= 0 ||
-                              (_amountPaid < _remainingBalance &&
-                                  !_isOrderFullyPaid))
-                      ? null
-                      : _processCashPayment,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.green.shade600,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                  ),
-                  child: _isProcessingPayment
-                      ? const SizedBox(
-                          width: 16,
-                          height: 16,
-                          child: CircularProgressIndicator(
-                            strokeWidth: 2,
-                            color: Colors.white,
-                          ),
-                        )
-                      : Text(
-                          _isOrderFullyPaid
-                              ? 'Complete Order'
-                              : 'Complete Payment',
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Add the remaining cash payment helper methods
-  void _setAmount(double amount) {
-    setState(() {
-      _amountPaid = amount;
-      _amountController.text = amount.toStringAsFixed(2);
-    });
-  }
-
-  Widget _buildNumPad() {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(child: _buildSimpleNumButton('1')),
-            const SizedBox(width: 8),
-            Expanded(child: _buildSimpleNumButton('2')),
-            const SizedBox(width: 8),
-            Expanded(child: _buildSimpleNumButton('3')),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: _buildSimpleNumButton('4')),
-            const SizedBox(width: 8),
-            Expanded(child: _buildSimpleNumButton('5')),
-            const SizedBox(width: 8),
-            Expanded(child: _buildSimpleNumButton('6')),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: _buildSimpleNumButton('7')),
-            const SizedBox(width: 8),
-            Expanded(child: _buildSimpleNumButton('8')),
-            const SizedBox(width: 8),
-            Expanded(child: _buildSimpleNumButton('9')),
-          ],
-        ),
-        const SizedBox(height: 8),
-        Row(
-          children: [
-            Expanded(child: _buildSimpleNumButton('0')),
-            const SizedBox(width: 8),
-            Expanded(child: _buildSimpleNumButton('.')),
-            const SizedBox(width: 8),
-            Expanded(
-              child: SizedBox(
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _amountController.text.isNotEmpty
-                      ? _backspaceAmount
-                      : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _amountController.text.isNotEmpty
-                        ? Colors.red.shade100
-                        : Colors.grey.shade200,
-                    foregroundColor: _amountController.text.isNotEmpty
-                        ? Colors.red.shade700
-                        : Colors.grey.shade500,
-                    elevation: _amountController.text.isNotEmpty ? 2 : 0,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      side: BorderSide(
-                        color: _amountController.text.isNotEmpty
-                            ? Colors.red.shade300
-                            : Colors.grey.shade400,
-                      ),
-                    ),
-                  ),
                   child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Icon(
-                        Icons.backspace_outlined,
-                        size: 18,
-                        color: _amountController.text.isNotEmpty
-                            ? Colors.red.shade700
-                            : Colors.grey.shade500,
-                      ),
                       Text(
-                        'DEL',
-                        style: TextStyle(
-                          fontSize: 10,
+                        orderProvider.selectedCustomer!.displayName,
+                        style: const TextStyle(
                           fontWeight: FontWeight.bold,
-                          color: _amountController.text.isNotEmpty
-                              ? Colors.red.shade700
-                              : Colors.grey.shade500,
+                          fontSize: 16,
+                        ),
+                      ),
+                      if (orderProvider.selectedCustomer!.phone != null)
+                        Text(
+                          'Phone: ${orderProvider.selectedCustomer!.phone}',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                      if (orderProvider.selectedCustomer!.birthday != null)
+                        Text(
+                          'Birthday: ${orderProvider.selectedCustomer!.birthday} 🎂',
+                          style: TextStyle(color: Colors.grey.shade600),
+                        ),
+                    ],
+                  ),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade100,
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.orange.shade300),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.star, color: Colors.orange, size: 16),
+                      const SizedBox(width: 4),
+                      Text(
+                        '${orderProvider.selectedCustomer!.loyaltyPoints} pts',
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton(
-            onPressed: _amountPaid > 0 ? _clearAmount : null,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _amountPaid > 0
-                  ? Colors.orange.shade100
-                  : Colors.grey.shade200,
-              foregroundColor: _amountPaid > 0
-                  ? Colors.orange.shade700
-                  : Colors.grey.shade500,
-              padding: const EdgeInsets.symmetric(vertical: 12),
-            ),
-            child: const Text(
-              'Clear All',
-              style: TextStyle(fontWeight: FontWeight.bold),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildModalNumPad(StateSetter setModalState) {
-    return Column(
-      children: [
-        Row(
-          children: [
-            Expanded(child: _buildModalNumButton('1', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(child: _buildModalNumButton('2', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(child: _buildModalNumButton('3', setModalState)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _buildModalNumButton('4', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(child: _buildModalNumButton('5', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(child: _buildModalNumButton('6', setModalState)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _buildModalNumButton('7', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(child: _buildModalNumButton('8', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(child: _buildModalNumButton('9', setModalState)),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _buildModalNumButton('0', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(child: _buildModalNumButton('00', setModalState)),
-            const SizedBox(width: 12),
-            Expanded(
-              child: SizedBox(
-                height: 60,
-                child: ElevatedButton(
-                  onPressed: _amountController.text.isNotEmpty
-                      ? () => _modalBackspaceAmount(setModalState)
-                      : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _amountController.text.isNotEmpty
-                        ? Colors.red.shade100
-                        : Colors.grey.shade200,
-                    foregroundColor: _amountController.text.isNotEmpty
-                        ? Colors.red.shade700
-                        : Colors.grey.shade500,
-                  ),
-                  child: const Icon(Icons.backspace, size: 24),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: SizedBox(
-                height: 50,
-                child: ElevatedButton(
-                  onPressed: _amountPaid > 0
-                      ? () => _modalClearAmount(setModalState)
-                      : null,
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: _amountPaid > 0
-                        ? Colors.orange.shade100
-                        : Colors.grey.shade200,
-                    foregroundColor: _amountPaid > 0
-                        ? Colors.orange.shade700
-                        : Colors.grey.shade500,
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                  child: const Text(
-                    'Clear All',
-                    style: TextStyle(fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildModalNumButton(String value, StateSetter setModalState) {
-    return SizedBox(
-      height: 60,
-      child: ElevatedButton(
-        onPressed: () => _modalAddToAmount(value, setModalState),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black87,
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(color: Colors.grey.shade300),
-          ),
-        ),
-        child: Text(
-          value,
-          style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-        ),
-      ),
-    );
-  }
-
-  void _modalAddToAmount(String digit, StateSetter setModalState) {
-    String currentText = _amountController.text;
-
-    // Handle decimal point
-    if (digit == '.') {
-      if (currentText.contains('.')) return; // Already has decimal
-      if (currentText.isEmpty) currentText = '0';
-    }
-
-    // Prevent multiple leading zeros
-    if (digit == '0' && currentText == '0') return;
-    if (currentText == '0' && digit != '.') currentText = '';
-
-    String newText = currentText + digit;
-    double newAmount = double.tryParse(newText) ?? 0.0;
-
-    // Limit to reasonable amount (max $9999.99)
-    if (newAmount > 9999.99) return;
-
-    setModalState(() {
-      setState(() {
-        _amountPaid = newAmount;
-        _amountController.text = newText;
-      });
-    });
-  }
-
-  void _modalBackspaceAmount(StateSetter setModalState) {
-    String currentText = _amountController.text;
-    if (currentText.isNotEmpty) {
-      String newText = currentText.substring(0, currentText.length - 1);
-      if (newText.isEmpty) newText = '0';
-
-      setModalState(() {
-        setState(() {
-          _amountPaid = double.tryParse(newText) ?? 0.0;
-          _amountController.text = newText;
-        });
-      });
-    }
-  }
-
-  void _modalClearAmount(StateSetter setModalState) {
-    setModalState(() {
-      setState(() {
-        _amountPaid = 0.0;
-        _amountController.text = '0';
-      });
-    });
-  }
-
-  Widget _buildSimpleNumButton(String value) {
-    return SizedBox(
-      height: 50,
-      child: ElevatedButton(
-        onPressed: () => _addToAmount(value),
-        style: ElevatedButton.styleFrom(
-          backgroundColor: Colors.white,
-          foregroundColor: Colors.black87,
-          elevation: 2,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-            side: BorderSide(color: Colors.grey.shade300),
-          ),
-        ),
-        child: Text(
-          value,
-          style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-        ),
-      ),
-    );
-  }
-
-  void _addToAmount(String digit) {
-    String currentText = _amountController.text;
-
-    // Handle decimal point
-    if (digit == '.') {
-      if (currentText.contains('.')) return; // Already has decimal
-      if (currentText.isEmpty) currentText = '0';
-    }
-
-    // Prevent multiple leading zeros
-    if (digit == '0' && currentText == '0') return;
-    if (currentText == '0' && digit != '.') currentText = '';
-
-    String newText = currentText + digit;
-    double newAmount = double.tryParse(newText) ?? 0.0;
-
-    // Limit to reasonable amount (max $9999.99)
-    if (newAmount > 9999.99) return;
-
-    setState(() {
-      _amountPaid = newAmount;
-      _amountController.text = newText;
-    });
-  }
-
-  void _backspaceAmount() {
-    String currentText = _amountController.text;
-    if (currentText.isNotEmpty) {
-      String newText = currentText.substring(0, currentText.length - 1);
-      if (newText.isEmpty) newText = '0';
-
-      setState(() {
-        _amountPaid = double.tryParse(newText) ?? 0.0;
-        _amountController.text = newText == '0' ? '' : newText;
-      });
-    }
-  }
-
-  void _clearAmount() {
-    setState(() {
-      _amountPaid = 0.0;
-      _amountController.text = '';
-    });
-  }
-
-  void _addPartialPayment(double amount) {
-    setState(() {
-      _partialPayments.add(amount);
-      _totalPaidSoFar += amount;
-      _amountPaid = 0.0;
-      _amountController.clear();
-    });
-  }
-
-  void _removePartialPayment(int index) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Remove Payment'),
-        content: Text(
-          'Are you sure you want to remove this payment of \$${_partialPayments[index].toStringAsFixed(2)}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _totalPaidSoFar -= _partialPayments[index];
-                _partialPayments.removeAt(index);
-              });
-              Navigator.of(context).pop();
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Remove'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _clearAllPartialPayments() {
-    if (_partialPayments.isEmpty) return;
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Clear All Payments'),
-        content: Text(
-          'Are you sure you want to remove all ${_partialPayments.length} partial payments totaling \$${_totalPaidSoFar.toStringAsFixed(2)}?',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _totalPaidSoFar = 0.0;
-                _partialPayments.clear();
-              });
-              Navigator.of(context).pop();
-            },
-            style: TextButton.styleFrom(foregroundColor: Colors.red),
-            child: const Text('Clear All'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<bool?> _showChangeConfirmationDialog(double changeAmount) {
-    return showDialog<bool>(
-      context: context,
-      barrierDismissible: false, // User must confirm or cancel
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.attach_money, color: Colors.green.shade600, size: 28),
-            const SizedBox(width: 8),
-            const Text('Change Required'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              'The customer has overpaid. Please give them their change:',
-              style: TextStyle(fontSize: 16),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: Colors.green.shade50,
-                border: Border.all(color: Colors.green.shade200),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.monetization_on,
-                    color: Colors.green.shade700,
-                    size: 32,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    '\$${changeAmount.toStringAsFixed(2)}',
-                    style: TextStyle(
-                      fontSize: 28,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green.shade700,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 12),
-            const Text(
-              'Have you given the customer their change?',
-              style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel Payment'),
-          ),
-          ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.green,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Yes, Change Given'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _processCashPayment() async {
-    setState(() {
-      _isProcessingPayment = true;
-    });
-
-    try {
-      // Check if there's change to be given (only if overpaid)
-      double changeAmount = _changeAmount;
-      if (changeAmount > 0.01) {
-        // Only show for meaningful change amounts
-        // Show change confirmation dialog
-        bool? changeGiven = await _showChangeConfirmationDialog(changeAmount);
-        if (changeGiven != true) {
-          setState(() {
-            _isProcessingPayment = false;
-          });
-          return; // User cancelled or didn't confirm change was given
-        }
-      }
-
-      // Update the order with payment information
-      final updatedOrder = _currentOrder.copyWith(
-        status: ServiceOrderStatus.completed,
-        completedAt: DateTime.now(),
-        paymentMethod: PaymentMethod.cash.name,
-        isPaid: true,
-        paidAt: DateTime.now(),
-      );
-
-      await FirebaseService.saveServiceOrder(updatedOrder);
-
-      // Award loyalty points if customer is selected
-      if (_selectedCustomer != null && _loyaltyPointsToEarn > 0) {
-        final finalOrder = updatedOrder.copyWith(
-          loyaltyPointsEarned: _loyaltyPointsToEarn,
-        );
-        await FirebaseService.saveServiceOrder(finalOrder);
-      }
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Cash payment completed successfully'),
-            backgroundColor: Colors.green,
-          ),
-        );
-        Navigator.of(context).pop(); // Return to dashboard
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Payment failed: $e')));
-      }
-    } finally {
-      setState(() {
-        _isProcessingPayment = false;
-      });
-    }
-  }
-}
-
-// Dialog classes would be added here but I'll need the checkout dialog content
-class _TechnicianSelectionDialog extends StatefulWidget {
-  final ServiceCatalog service;
-  final List<Employee> availableEmployees;
-  final Function(Employee employee, int quantity) onAdd;
-
-  const _TechnicianSelectionDialog({
-    required this.service,
-    required this.availableEmployees,
-    required this.onAdd,
-  });
-
-  @override
-  State<_TechnicianSelectionDialog> createState() =>
-      _TechnicianSelectionDialogState();
-}
-
-class _TechnicianSelectionDialogState
-    extends State<_TechnicianSelectionDialog> {
-  Employee? _selectedEmployee;
-  int _quantity = 1;
-
-  @override
-  Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Add ${widget.service.name}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Service Details
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: Colors.blue.shade50,
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.service.name,
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 4),
-                Text('\$${widget.service.price.toStringAsFixed(2)}'),
-                Text('Duration: ${widget.service.durationMinutes} minutes'),
               ],
             ),
           ),
-          const SizedBox(height: 16),
+      ],
+    );
+  }
 
-          // Employee Selection
-          const Text(
-            'Select Technician:',
-            style: TextStyle(fontWeight: FontWeight.w500),
+  Widget _buildTechnicianSelectionSection(
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
+    final selectedTechnician = catalogProvider.employees
+        .where((emp) => emp.id == orderProvider.selectedTechnicianId)
+        .firstOrNull;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          'Technician Assignment',
+          style: TextStyle(
+            fontSize: 16,
+            fontWeight: FontWeight.bold,
+            color: Colors.purple.shade800,
           ),
-          const SizedBox(height: 8),
-          ...widget.availableEmployees.map((employee) {
-            return RadioListTile<Employee>(
-              title: Text(employee.name),
-              subtitle: Text(employee.email),
-              value: employee,
-              groupValue: _selectedEmployee,
-              onChanged: (Employee? value) {
-                setState(() {
-                  _selectedEmployee = value;
-                });
-              },
-            );
-          }),
-          const SizedBox(height: 16),
-
-          // Quantity Selection
-          Row(
-            children: [
-              const Text('Quantity: '),
-              IconButton(
-                onPressed: _quantity > 1
-                    ? () => setState(() => _quantity--)
-                    : null,
-                icon: const Icon(Icons.remove_circle_outline),
-              ),
-              Text(
-                _quantity.toString(),
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.bold,
+        ),
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.purple.shade50,
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.purple.shade200),
+          ),
+          child: selectedTechnician != null
+              ? Row(
+                  children: [
+                    CircleAvatar(
+                      backgroundColor: Colors.purple.shade600,
+                      child: Text(
+                        selectedTechnician.name.isNotEmpty
+                            ? selectedTechnician.name[0]
+                            : '?',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            selectedTechnician.name,
+                            style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                            ),
+                          ),
+                          Text(
+                            selectedTechnician.email,
+                            style: TextStyle(color: Colors.grey.shade600),
+                          ),
+                          if (selectedTechnician.position.isNotEmpty)
+                            Text(
+                              selectedTechnician.position,
+                              style: TextStyle(
+                                color: Colors.purple.shade600,
+                                fontSize: 12,
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => _showTechnicianChangeDialog(
+                        orderProvider,
+                        catalogProvider,
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.purple.shade100,
+                        foregroundColor: Colors.purple.shade800,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
+                      child: const Text('Change'),
+                    ),
+                  ],
+                )
+              : Row(
+                  children: [
+                    const Icon(Icons.person_pin, color: Colors.purple),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        'No technician selected',
+                        style: TextStyle(fontSize: 16, color: Colors.grey),
+                      ),
+                    ),
+                    ElevatedButton(
+                      onPressed: () => _showTechnicianChangeDialog(
+                        orderProvider,
+                        catalogProvider,
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Colors.purple.shade600,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 8,
+                        ),
+                      ),
+                      child: const Text('Select'),
+                    ),
+                  ],
                 ),
-              ),
-              IconButton(
-                onPressed: () => setState(() => _quantity++),
-                icon: const Icon(Icons.add_circle_outline),
-              ),
-            ],
+        ),
+      ],
+    );
+  }
+
+  void _showTechnicianChangeDialog(
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Select Technician'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: ListView.builder(
+            shrinkWrap: true,
+            itemCount: catalogProvider.employees.length,
+            itemBuilder: (context, index) {
+              final employee = catalogProvider.employees[index];
+              final isSelected =
+                  employee.id == orderProvider.selectedTechnicianId;
+
+              return ListTile(
+                leading: CircleAvatar(
+                  backgroundColor: isSelected
+                      ? Colors.purple.shade600
+                      : Colors.purple.shade200,
+                  child: Text(
+                    employee.name.isNotEmpty ? employee.name[0] : '?',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+                title: Text(
+                  employee.name,
+                  style: TextStyle(
+                    fontWeight: isSelected
+                        ? FontWeight.bold
+                        : FontWeight.normal,
+                  ),
+                ),
+                subtitle: Text(
+                  employee.position.isNotEmpty
+                      ? '${employee.email} • ${employee.position}'
+                      : employee.email,
+                  overflow: TextOverflow.ellipsis,
+                ),
+                trailing: isSelected
+                    ? Icon(Icons.check_circle, color: Colors.green.shade600)
+                    : null,
+                onTap: () {
+                  orderProvider.setSelectedTechnician(employee.id);
+                  Navigator.of(context).pop();
+                },
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
           ),
         ],
       ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: const Text('Cancel'),
-        ),
-        ElevatedButton(
-          onPressed: _selectedEmployee != null
-              ? () {
-                  widget.onAdd(_selectedEmployee!, _quantity);
-                  Navigator.of(context).pop();
-                }
-              : null,
-          child: const Text('Add Service'),
-        ),
-      ],
     );
   }
 }

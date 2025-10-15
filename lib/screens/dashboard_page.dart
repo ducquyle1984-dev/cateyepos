@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import 'setup/setup_page.dart';
 import 'service_order_page.dart';
 import 'customer_management_page.dart';
+import '../provider/auth_provider.dart';
 import '../models/service_order.dart';
 import '../models/service_order_item.dart';
 import '../models/employee.dart';
@@ -91,6 +93,15 @@ class _DashboardPageState extends State<DashboardPage> {
             _buildDrawerItem(icon: Icons.analytics, title: 'Reports', index: 4),
             const Divider(),
             _buildDrawerItem(icon: Icons.settings, title: 'Setup', index: 5),
+            const Divider(),
+            ListTile(
+              leading: const Icon(Icons.logout, color: Colors.red),
+              title: const Text('Logout', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.of(context).pop(); // Close drawer
+                Provider.of<AuthProvider>(context, listen: false).signOut();
+              },
+            ),
           ],
         ),
       ),

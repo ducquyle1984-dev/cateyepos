@@ -7,6 +7,7 @@ class Customer {
   final String? email;
   final String? phone;
   final String? address;
+  final String? birthday; // Format: "MM-DD" (month and day only)
   final int loyaltyPoints;
   final DateTime createdAt;
   final DateTime updatedAt;
@@ -24,6 +25,7 @@ class Customer {
     this.email,
     this.phone,
     this.address,
+    this.birthday,
     this.loyaltyPoints = 0,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -70,6 +72,7 @@ class Customer {
       email: data['email'],
       phone: data['phone'],
       address: data['address'],
+      birthday: data['birthday'],
       loyaltyPoints: data['loyaltyPoints'] ?? 0,
       createdAt: (data['createdAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
       updatedAt: (data['updatedAt'] as Timestamp?)?.toDate() ?? DateTime.now(),
@@ -91,6 +94,7 @@ class Customer {
       email: data['email'],
       phone: data['phone'],
       address: data['address'],
+      birthday: data['birthday'],
       loyaltyPoints: data['loyaltyPoints'] ?? 0,
       createdAt: data['createdAt'] is Timestamp
           ? (data['createdAt'] as Timestamp).toDate()
@@ -123,6 +127,7 @@ class Customer {
       'email': email,
       'phone': phone,
       'address': address,
+      'birthday': birthday,
       'loyaltyPoints': loyaltyPoints,
       'createdAt': Timestamp.fromDate(createdAt),
       'updatedAt': Timestamp.fromDate(updatedAt),
@@ -143,6 +148,7 @@ class Customer {
     String? email,
     String? phone,
     String? address,
+    String? birthday,
     int? loyaltyPoints,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -160,6 +166,7 @@ class Customer {
       email: email ?? this.email,
       phone: phone ?? this.phone,
       address: address ?? this.address,
+      birthday: birthday ?? this.birthday,
       loyaltyPoints: loyaltyPoints ?? this.loyaltyPoints,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? DateTime.now(),
