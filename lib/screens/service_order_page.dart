@@ -67,6 +67,12 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     await serviceOrderProvider.loadLoyaltySettings();
   }
 
+  // TODO: Implement navigation handling to save incomplete orders when navigating away
+  // This would involve:
+  // 1. Detecting unsaved changes (items, customer, technician selected but order not saved)
+  // 2. Showing dialog to confirm navigation with save option
+  // 3. Using WillPopScope or PopScope to intercept back navigation
+
   @override
   Widget build(BuildContext context) {
     return Consumer2<ServiceOrderProvider, CatalogProvider>(
@@ -458,11 +464,11 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   ) {
     // Group items by technician ID
     final Map<String, List<ServiceOrderItem>> groupedItems = {};
-    
+
     for (int i = 0; i < orderProvider.orderItems.length; i++) {
       final item = orderProvider.orderItems[i];
       final technicianId = item.technicianId;
-      
+
       if (!groupedItems.containsKey(technicianId)) {
         groupedItems[technicianId] = [];
       }
@@ -475,7 +481,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
         final technicianId = groupedItems.keys.elementAt(groupIndex);
         final items = groupedItems[technicianId]!;
         final technicianName = items.first.technicianName;
-        
+
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           child: Padding(
@@ -485,7 +491,10 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
               children: [
                 // Technician header
                 Container(
-                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  padding: const EdgeInsets.symmetric(
+                    vertical: 8,
+                    horizontal: 12,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.blue.shade50,
                     borderRadius: BorderRadius.circular(6),
@@ -536,7 +545,8 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                     originalIndex,
                     orderProvider,
                     catalogProvider,
-                    showTechnician: false, // Don't show technician name in grouped view
+                    showTechnician:
+                        false, // Don't show technician name in grouped view
                   );
                 }),
               ],
@@ -555,13 +565,13 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     bool showTechnician = true,
   }) {
     return Card(
-      margin: showTechnician 
+      margin: showTechnician
           ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
           : const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
       elevation: showTechnician ? 1 : 0,
       color: showTechnician ? null : Colors.grey.shade50,
       child: Padding(
-        padding: showTechnician 
+        padding: showTechnician
             ? const EdgeInsets.all(12)
             : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Column(
@@ -626,15 +636,62 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
               ),
             ],
           ),
-          if (orderProvider.discountAmount > 0) ...[
+          // Applied discounts section
+          if (orderProvider.appliedDiscounts.isNotEmpty) ...[
             const SizedBox(height: 8),
+            const Text(
+              'Applied Discounts:',
+              style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 4),
+            ...orderProvider.appliedDiscounts.map((discount) {
+              return Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        discount.description ?? discount.name,
+                        style: const TextStyle(fontSize: 14),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    Text(
+                      '-\$${discount.calculateDiscount(orderProvider.subtotal).toStringAsFixed(2)}',
+                      style: const TextStyle(fontSize: 14, color: Colors.red),
+                    ),
+                    IconButton(
+                      onPressed: () =>
+                          _removeDiscount(orderProvider, discount.id),
+                      icon: const Icon(
+                        Icons.close,
+                        size: 16,
+                        color: Colors.red,
+                      ),
+                      constraints: const BoxConstraints(),
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      tooltip: 'Remove discount',
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const SizedBox(height: 4),
+            const Divider(),
             Row(
               children: [
-                const Text('Discount:', style: TextStyle(fontSize: 16)),
+                const Text(
+                  'Total Discounts:',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                ),
                 const Spacer(),
                 Text(
                   '-\$${orderProvider.discountAmount.toStringAsFixed(2)}',
-                  style: const TextStyle(fontSize: 16, color: Colors.red),
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Colors.red,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ],
             ),
@@ -658,6 +715,94 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
               ),
             ],
           ),
+          // Payment information
+          if (orderProvider.totalPaidSoFar > 0) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('Paid So Far:', style: TextStyle(fontSize: 16)),
+                const Spacer(),
+                Text(
+                  '\$${orderProvider.totalPaidSoFar.toStringAsFixed(2)}',
+                  style: const TextStyle(fontSize: 16, color: Colors.blue),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                const Text(
+                  'Remaining:',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                Text(
+                  '\$${orderProvider.remainingBalance.toStringAsFixed(2)}',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                    color: orderProvider.remainingBalance > 0
+                        ? Colors.red.shade700
+                        : Colors.green.shade700,
+                  ),
+                ),
+              ],
+            ),
+            // Partial payments list
+            if (orderProvider.partialPayments.isNotEmpty) ...[
+              const SizedBox(height: 8),
+              const Divider(),
+              const Text(
+                'Partial Payments:',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 4),
+              ...orderProvider.partialPayments.asMap().entries.map((entry) {
+                final index = entry.key;
+                final payment = entry.value;
+                return Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    children: [
+                      Text(
+                        'Payment ${index + 1}: \$${payment.toStringAsFixed(2)}',
+                        style: const TextStyle(fontSize: 14),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () =>
+                            _removePartialPayment(orderProvider, index),
+                        icon: const Icon(Icons.close, size: 16),
+                        color: Colors.red,
+                        constraints: const BoxConstraints(),
+                        padding: EdgeInsets.zero,
+                        tooltip: 'Remove this payment',
+                      ),
+                    ],
+                  ),
+                );
+              }),
+              if (orderProvider.partialPayments.length > 1)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Row(
+                    children: [
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: () =>
+                            _clearAllPartialPayments(orderProvider),
+                        icon: const Icon(Icons.clear_all, size: 16),
+                        label: const Text('Clear All'),
+                        style: TextButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ],
           const SizedBox(height: 12),
           if (orderProvider.selectedCustomer != null &&
               orderProvider.loyaltyPointsToEarn > 0)
@@ -778,16 +923,12 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     try {
       await orderProvider.saveOrderForLater();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Order saved successfully!')),
-        );
+        // Navigate back to dashboard after successful save
+        Navigator.of(context).pop();
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error saving order: $e')));
-      }
+      // Error handling - could log to console or show error dialog if needed
+      debugPrint('Error saving order: $e');
     }
   }
 
@@ -832,18 +973,8 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     }
 
     void applyPresetDiscount(double percentage) {
-      final discountAmount = (orderProvider.subtotal * percentage) / 100;
-      orderProvider.applyDiscount(discountAmount);
+      orderProvider.applyPercentageDiscount(percentage);
       Navigator.of(context).pop();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '$percentage% discount (\$${discountAmount.toStringAsFixed(2)}) applied',
-          ),
-          backgroundColor: Colors.green,
-        ),
-      );
     }
 
     showDialog(
@@ -1054,42 +1185,32 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                             child: const Text('Cancel'),
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 16),
                         Expanded(
-                          child: TextButton(
-                            onPressed: () {
-                              orderProvider.applyDiscount(0);
-                              Navigator.of(context).pop();
-                            },
-                            child: const Text('Remove Discount'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
+                          flex: 2,
                           child: ElevatedButton(
                             onPressed: () {
                               final input = displayValue;
                               if (input.isNotEmpty && input != '0') {
                                 final value = double.tryParse(input);
                                 if (value != null && value > 0) {
-                                  double discountAmount;
                                   if (isPercentage) {
-                                    discountAmount =
-                                        (orderProvider.subtotal * value) / 100;
+                                    orderProvider.applyPercentageDiscount(
+                                      value,
+                                      description: 'Custom $value% discount',
+                                    );
                                   } else {
-                                    discountAmount = value;
+                                    orderProvider.applyDiscount(
+                                      value,
+                                      description:
+                                          'Custom \$${value.toStringAsFixed(2)} discount',
+                                    );
                                   }
-
-                                  if (discountAmount > orderProvider.subtotal) {
-                                    discountAmount = orderProvider.subtotal;
-                                  }
-
-                                  orderProvider.applyDiscount(discountAmount);
                                   Navigator.of(context).pop();
                                 }
                               }
                             },
-                            child: const Text('Apply'),
+                            child: const Text('Apply Discount'),
                           ),
                         ),
                       ],
@@ -1111,12 +1232,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   ) {
     // Check if a technician is selected
     if (orderProvider.selectedTechnicianId == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Please select a technician first'),
-          backgroundColor: Colors.orange,
-        ),
-      );
       return;
     }
 
@@ -1126,12 +1241,6 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
         .firstOrNull;
 
     if (selectedTechnician == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Selected technician not found'),
-          backgroundColor: Colors.red,
-        ),
-      );
       return;
     }
 
@@ -1205,7 +1314,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                               style: TextStyle(fontSize: 18),
                             ),
                             Text(
-                              '\$${orderProvider.total.toStringAsFixed(2)}',
+                              '\$${orderProvider.remainingBalance.toStringAsFixed(2)}',
                               style: const TextStyle(
                                 fontSize: 18,
                                 fontWeight: FontWeight.bold,
@@ -1238,15 +1347,39 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
-                            if (orderProvider.amountPaid >= orderProvider.total)
-                              Text(
-                                'Change: \$${orderProvider.changeAmount.toStringAsFixed(2)}',
-                                style: const TextStyle(
-                                  fontSize: 16,
-                                  color: Colors.green,
-                                  fontWeight: FontWeight.bold,
+                            if (orderProvider.amountPaid >=
+                                orderProvider.remainingBalance) ...[
+                              const SizedBox(height: 8),
+                              Container(
+                                padding: const EdgeInsets.all(8),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.shade100,
+                                  borderRadius: BorderRadius.circular(6),
+                                  border: Border.all(
+                                    color: Colors.green.shade300,
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    const Icon(
+                                      Icons.account_balance_wallet,
+                                      color: Colors.green,
+                                      size: 20,
+                                    ),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      'Change: \$${orderProvider.changeAmount.toStringAsFixed(2)}',
+                                      style: const TextStyle(
+                                        fontSize: 18,
+                                        color: Colors.green,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
+                            ],
                           ],
                         ),
                       ),
@@ -1271,7 +1404,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                             padding: const EdgeInsets.symmetric(vertical: 12),
                           ),
                           child: Text(
-                            'Pay Exact Amount (\$${orderProvider.total.toStringAsFixed(2)})',
+                            'Pay Exact Amount (\$${orderProvider.remainingBalance.toStringAsFixed(2)})',
                             style: const TextStyle(fontWeight: FontWeight.bold),
                           ),
                         ),
@@ -1287,12 +1420,30 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                               child: const Text('Cancel'),
                             ),
                           ),
-                          const SizedBox(width: 16),
+                          const SizedBox(width: 8),
+                          if (orderProvider.amountPaid > 0 &&
+                              orderProvider.amountPaid <
+                                  orderProvider.remainingBalance)
+                            Expanded(
+                              child: ElevatedButton(
+                                onPressed: () =>
+                                    _addPartialPayment(orderProvider),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.blue,
+                                  foregroundColor: Colors.white,
+                                ),
+                                child: const Text('Add Partial Payment'),
+                              ),
+                            ),
+                          if (orderProvider.amountPaid > 0 &&
+                              orderProvider.amountPaid <
+                                  orderProvider.remainingBalance)
+                            const SizedBox(width: 8),
                           Expanded(
                             child: ElevatedButton(
                               onPressed:
                                   orderProvider.amountPaid >=
-                                      orderProvider.total
+                                      orderProvider.remainingBalance
                                   ? () =>
                                         _handlePaymentCompletion(orderProvider)
                                   : null,
@@ -1300,7 +1451,12 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                                 backgroundColor: Colors.green,
                                 foregroundColor: Colors.white,
                               ),
-                              child: const Text('Complete Payment'),
+                              child: Text(
+                                orderProvider.amountPaid >=
+                                        orderProvider.remainingBalance
+                                    ? 'Complete Payment'
+                                    : 'Complete Payment (Insufficient Amount)',
+                              ),
                             ),
                           ),
                         ],
@@ -1534,129 +1690,52 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     StateSetter setModalState,
     ServiceOrderProvider orderProvider,
   ) {
-    orderProvider.setAmountPaid(orderProvider.total);
+    orderProvider.setAmountPaid(orderProvider.remainingBalance);
     setModalState(() {});
+  }
+
+  void _addPartialPayment(ServiceOrderProvider orderProvider) {
+    if (orderProvider.amountPaid > 0) {
+      // Add the partial payment
+      orderProvider.addPartialPayment(orderProvider.amountPaid);
+
+      // Reset the current amount paid
+      orderProvider.setAmountPaid(0.0);
+
+      // Close the payment modal
+      Navigator.of(context).pop();
+    }
   }
 
   Future<void> _handlePaymentCompletion(
     ServiceOrderProvider orderProvider,
   ) async {
-    // Check if change is required and show confirmation dialog
-    if (orderProvider.changeAmount > 0.01) {
-      final confirmed = await _showChangeConfirmationDialog(
-        orderProvider.changeAmount,
-      );
-      if (!confirmed) return;
-    }
-
     // Close the payment modal
     Navigator.of(context).pop();
 
     try {
-      await orderProvider.completeOrder();
+      // Calculate change before adding the payment
+      final changeAmount =
+          orderProvider.amountPaid > orderProvider.remainingBalance
+          ? orderProvider.amountPaid - orderProvider.remainingBalance
+          : 0.0;
+
+      // Add the payment before completing the order
       orderProvider.addPartialPayment(orderProvider.amountPaid);
+      await orderProvider.completeOrder();
 
       if (mounted) {
-        // Show change dialog if needed
-        if (orderProvider.changeAmount > 0.01) {
-          _showChangeDialog(orderProvider.changeAmount);
+        // Show change dialog if needed, then navigate to dashboard
+        if (changeAmount > 0.01) {
+          _showChangeDialog(changeAmount);
+        } else {
+          // No change due, navigate directly to dashboard
+          Navigator.of(context).pop();
         }
-
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Payment completed successfully!')),
-        );
       }
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('Error completing payment: $e')));
-      }
+      debugPrint('Error completing payment: $e');
     }
-  }
-
-  Future<bool> _showChangeConfirmationDialog(double changeAmount) async {
-    return await showDialog<bool>(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: Row(
-              children: [
-                Icon(Icons.warning, color: Colors.orange.shade600),
-                const SizedBox(width: 8),
-                const Text('Confirm Payment'),
-              ],
-            ),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                const Text(
-                  'The customer paid more than the total amount.',
-                  style: TextStyle(fontSize: 16),
-                ),
-                const SizedBox(height: 16),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.shade200),
-                  ),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'Change Due:',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '\$${changeAmount.toStringAsFixed(2)}',
-                        style: TextStyle(
-                          fontSize: 32,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange.shade700,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 16),
-                const Text(
-                  'Please confirm that you will give the correct change to the customer.',
-                  style: TextStyle(fontSize: 14),
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: const Text('Cancel'),
-              ),
-              ElevatedButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.green,
-                  foregroundColor: Colors.white,
-                ),
-                child: const Text('Confirm & Complete'),
-              ),
-            ],
-          ),
-        ) ??
-        false;
-  }
-
-  void _processCreditPayment(ServiceOrderProvider orderProvider) {
-    // Placeholder for credit payment processing
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('Credit payment processing not implemented yet'),
-      ),
-    );
   }
 
   void _showChangeDialog(double changeAmount) {
@@ -1687,12 +1766,110 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
         ),
         actions: [
           ElevatedButton(
-            onPressed: () => Navigator.of(context).pop(),
+            onPressed: () {
+              Navigator.of(context).pop(); // Close the change dialog
+              Navigator.of(context).pop(); // Navigate back to dashboard
+            },
             child: const Text('OK'),
           ),
         ],
       ),
     );
+  }
+
+  void _processCreditPayment(ServiceOrderProvider orderProvider) {
+    // Placeholder for credit payment processing
+    debugPrint('Credit payment processing not implemented yet');
+  }
+
+  void _removePartialPayment(ServiceOrderProvider orderProvider, int index) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove Payment'),
+        content: Text(
+          'Are you sure you want to remove this payment of \$${orderProvider.partialPayments[index].toStringAsFixed(2)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              orderProvider.removePartialPayment(index);
+              Navigator.of(context).pop();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Remove', style: TextStyle(color: Colors.white)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _clearAllPartialPayments(ServiceOrderProvider orderProvider) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Clear All Payments'),
+        content: Text(
+          'Are you sure you want to remove all partial payments totaling \$${orderProvider.totalPaidSoFar.toStringAsFixed(2)}?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              orderProvider.clearAllPartialPayments();
+              Navigator.of(context).pop();
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text(
+              'Clear All',
+              style: TextStyle(color: Colors.white),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _removeDiscount(ServiceOrderProvider orderProvider, String discountId) {
+    final discount = orderProvider.appliedDiscounts
+        .where((d) => d.id == discountId)
+        .firstOrNull;
+
+    if (discount != null) {
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Remove Discount'),
+          content: Text(
+            'Are you sure you want to remove "${discount.description ?? discount.name}"?',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                orderProvider.removeDiscount(discountId);
+                Navigator.of(context).pop();
+              },
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+              child: const Text(
+                'Remove',
+                style: TextStyle(color: Colors.white),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
   }
 
   Color _getStatusColor(ServiceOrderStatus status) {

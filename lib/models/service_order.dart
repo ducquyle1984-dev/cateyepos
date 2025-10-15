@@ -47,12 +47,14 @@ enum DiscountType {
 }
 
 class ServiceOrderDiscount {
+  final String id;
   final String name;
   final DiscountType type;
   final double value;
   final String? description;
 
   ServiceOrderDiscount({
+    required this.id,
     required this.name,
     required this.type,
     required this.value,
@@ -70,6 +72,7 @@ class ServiceOrderDiscount {
 
   factory ServiceOrderDiscount.fromMap(Map<String, dynamic> data) {
     return ServiceOrderDiscount(
+      id: data['id'] ?? DateTime.now().millisecondsSinceEpoch.toString(),
       name: data['name'] ?? '',
       type: DiscountType.fromString(data['type'] ?? 'percentage'),
       value: (data['value'] ?? 0).toDouble(),
@@ -79,6 +82,7 @@ class ServiceOrderDiscount {
 
   Map<String, dynamic> toMap() {
     return {
+      'id': id,
       'name': name,
       'type': type.displayName,
       'value': value,
@@ -99,7 +103,7 @@ class ServiceOrder {
   final List<String>
   serviceOrderItemIds; // References to ServiceOrderItem documents
   final double subtotal;
-  final ServiceOrderDiscount? orderDiscount;
+  final List<ServiceOrderDiscount> appliedDiscounts;
   final double discountAmount;
   final double taxAmount;
   final double total;
@@ -108,6 +112,8 @@ class ServiceOrder {
   final bool isPaid;
   final String? paymentMethod; // 'cash', 'credit', 'debit', etc.
   final DateTime? paidAt;
+  final double totalPaidSoFar; // Amount paid so far (for partial payments)
+  final List<double> partialPayments; // List of partial payment amounts
   final int loyaltyPointsEarned;
   final int loyaltyPointsUsed;
 
@@ -122,7 +128,7 @@ class ServiceOrder {
     this.completedAt,
     this.serviceOrderItemIds = const [],
     this.subtotal = 0.0,
-    this.orderDiscount,
+    this.appliedDiscounts = const [],
     this.discountAmount = 0.0,
     this.taxAmount = 0.0,
     this.total = 0.0,
@@ -131,6 +137,8 @@ class ServiceOrder {
     this.isPaid = false,
     this.paymentMethod,
     this.paidAt,
+    this.totalPaidSoFar = 0.0,
+    this.partialPayments = const [],
     this.loyaltyPointsEarned = 0,
     this.loyaltyPointsUsed = 0,
   }) : createdAt = createdAt ?? DateTime.now(),
@@ -173,9 +181,11 @@ class ServiceOrder {
       completedAt: (data['completedAt'] as Timestamp?)?.toDate(),
       serviceOrderItemIds: List<String>.from(data['serviceOrderItemIds'] ?? []),
       subtotal: (data['subtotal'] ?? 0).toDouble(),
-      orderDiscount: data['orderDiscount'] != null
-          ? ServiceOrderDiscount.fromMap(data['orderDiscount'])
-          : null,
+      appliedDiscounts:
+          (data['appliedDiscounts'] as List<dynamic>?)
+              ?.map((discount) => ServiceOrderDiscount.fromMap(discount))
+              .toList() ??
+          [],
       discountAmount: (data['discountAmount'] ?? 0).toDouble(),
       taxAmount: (data['taxAmount'] ?? 0).toDouble(),
       total: (data['total'] ?? 0).toDouble(),
@@ -184,6 +194,10 @@ class ServiceOrder {
       isPaid: data['isPaid'] ?? false,
       paymentMethod: data['paymentMethod'],
       paidAt: (data['paidAt'] as Timestamp?)?.toDate(),
+      totalPaidSoFar: (data['totalPaidSoFar'] ?? 0).toDouble(),
+      partialPayments: List<double>.from(
+        (data['partialPayments'] ?? []).map((x) => x.toDouble()),
+      ),
       loyaltyPointsEarned: data['loyaltyPointsEarned'] ?? 0,
       loyaltyPointsUsed: data['loyaltyPointsUsed'] ?? 0,
     );
@@ -214,9 +228,11 @@ class ServiceOrder {
                 : null),
       serviceOrderItemIds: List<String>.from(data['serviceOrderItemIds'] ?? []),
       subtotal: (data['subtotal'] ?? 0).toDouble(),
-      orderDiscount: data['orderDiscount'] != null
-          ? ServiceOrderDiscount.fromMap(data['orderDiscount'])
-          : null,
+      appliedDiscounts:
+          (data['appliedDiscounts'] as List<dynamic>?)
+              ?.map((discount) => ServiceOrderDiscount.fromMap(discount))
+              .toList() ??
+          [],
       discountAmount: (data['discountAmount'] ?? 0).toDouble(),
       taxAmount: (data['taxAmount'] ?? 0).toDouble(),
       total: (data['total'] ?? 0).toDouble(),
@@ -227,6 +243,10 @@ class ServiceOrder {
       paidAt: data['paidAt'] is Timestamp
           ? (data['paidAt'] as Timestamp).toDate()
           : (data['paidAt'] != null ? DateTime.parse(data['paidAt']) : null),
+      totalPaidSoFar: (data['totalPaidSoFar'] ?? 0).toDouble(),
+      partialPayments: List<double>.from(
+        (data['partialPayments'] ?? []).map((x) => x.toDouble()),
+      ),
       loyaltyPointsEarned: data['loyaltyPointsEarned'] ?? 0,
       loyaltyPointsUsed: data['loyaltyPointsUsed'] ?? 0,
     );
@@ -246,7 +266,9 @@ class ServiceOrder {
           : null,
       'serviceOrderItemIds': serviceOrderItemIds,
       'subtotal': subtotal,
-      'orderDiscount': orderDiscount?.toMap(),
+      'appliedDiscounts': appliedDiscounts
+          .map((discount) => discount.toMap())
+          .toList(),
       'discountAmount': discountAmount,
       'taxAmount': taxAmount,
       'total': total,
@@ -255,6 +277,8 @@ class ServiceOrder {
       'isPaid': isPaid,
       'paymentMethod': paymentMethod,
       'paidAt': paidAt != null ? Timestamp.fromDate(paidAt!) : null,
+      'totalPaidSoFar': totalPaidSoFar,
+      'partialPayments': partialPayments,
       'loyaltyPointsEarned': loyaltyPointsEarned,
       'loyaltyPointsUsed': loyaltyPointsUsed,
     };
@@ -272,7 +296,7 @@ class ServiceOrder {
     DateTime? completedAt,
     List<String>? serviceOrderItemIds,
     double? subtotal,
-    ServiceOrderDiscount? orderDiscount,
+    List<ServiceOrderDiscount>? appliedDiscounts,
     double? discountAmount,
     double? taxAmount,
     double? total,
@@ -281,6 +305,8 @@ class ServiceOrder {
     bool? isPaid,
     String? paymentMethod,
     DateTime? paidAt,
+    double? totalPaidSoFar,
+    List<double>? partialPayments,
     int? loyaltyPointsEarned,
     int? loyaltyPointsUsed,
   }) {
@@ -295,7 +321,7 @@ class ServiceOrder {
       completedAt: completedAt ?? this.completedAt,
       serviceOrderItemIds: serviceOrderItemIds ?? this.serviceOrderItemIds,
       subtotal: subtotal ?? this.subtotal,
-      orderDiscount: orderDiscount ?? this.orderDiscount,
+      appliedDiscounts: appliedDiscounts ?? this.appliedDiscounts,
       discountAmount: discountAmount ?? this.discountAmount,
       taxAmount: taxAmount ?? this.taxAmount,
       total: total ?? this.total,
@@ -304,6 +330,8 @@ class ServiceOrder {
       isPaid: isPaid ?? this.isPaid,
       paymentMethod: paymentMethod ?? this.paymentMethod,
       paidAt: paidAt ?? this.paidAt,
+      totalPaidSoFar: totalPaidSoFar ?? this.totalPaidSoFar,
+      partialPayments: partialPayments ?? this.partialPayments,
       loyaltyPointsEarned: loyaltyPointsEarned ?? this.loyaltyPointsEarned,
       loyaltyPointsUsed: loyaltyPointsUsed ?? this.loyaltyPointsUsed,
     );

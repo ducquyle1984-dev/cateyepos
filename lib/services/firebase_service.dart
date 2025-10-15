@@ -659,6 +659,60 @@ class FirebaseService {
     }
   }
 
+  // Get service orders by date range for reporting
+  static Future<List<ServiceOrder>> getServiceOrdersByDateRange(
+    DateTime startDate,
+    DateTime endDate,
+  ) async {
+    try {
+      print(
+        'Fetching service orders from ${startDate.toIso8601String()} to ${endDate.toIso8601String()}',
+      );
+
+      // Set start of day for startDate and end of day for endDate
+      final startOfDay = DateTime(
+        startDate.year,
+        startDate.month,
+        startDate.day,
+      );
+      final endOfDay = DateTime(
+        endDate.year,
+        endDate.month,
+        endDate.day,
+        23,
+        59,
+        59,
+      );
+
+      final snapshot = await _firestore
+          .collection(_serviceOrdersCollection)
+          .where(
+            'createdAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(startOfDay),
+          )
+          .where('createdAt', isLessThanOrEqualTo: Timestamp.fromDate(endOfDay))
+          .get();
+
+      print('Found ${snapshot.docs.length} service orders in date range');
+      final orders = snapshot.docs
+          .map((doc) => ServiceOrder.fromFirestore(doc))
+          .toList();
+
+      // Sort by creation date (newest first)
+      orders.sort((a, b) => b.createdAt.compareTo(a.createdAt));
+
+      return orders;
+    } catch (e) {
+      print('Error fetching service orders by date range: $e');
+      return [];
+    }
+  }
+
+  // Update service order (alias for saveServiceOrder)
+  static Future<void> updateServiceOrder(ServiceOrder order) async {
+    return saveServiceOrder(order);
+  }
+
   // Helper method to calculate loyalty points
   static int calculateLoyaltyPoints(
     double totalAmount,

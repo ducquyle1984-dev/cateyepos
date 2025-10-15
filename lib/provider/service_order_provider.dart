@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/service_order.dart';
 import '../models/service_order_item.dart';
 import '../models/customer.dart';
@@ -15,6 +16,9 @@ class ServiceOrderProvider with ChangeNotifier {
   bool _isSaving = false;
   String? _preSelectedTechnicianId;
   bool _showDiscountSection = false;
+
+  // Discount tracking
+  List<ServiceOrderDiscount> _appliedDiscounts = [];
 
   // Payment flow state
   bool _showPaymentOptions = false;
@@ -43,6 +47,7 @@ class ServiceOrderProvider with ChangeNotifier {
   bool get isProcessingPayment => _isProcessingPayment;
   double get pointsPerDollar => _pointsPerDollar;
   int get loyaltyPointsToEarn => _loyaltyPointsToEarn;
+  List<ServiceOrderDiscount> get appliedDiscounts => _appliedDiscounts;
 
   // Calculated properties
   double get subtotal {
@@ -50,14 +55,26 @@ class ServiceOrderProvider with ChangeNotifier {
   }
 
   double get discountAmount {
-    return _orderItems.fold(0.0, (sum, item) => sum + item.discountAmount);
+    return _appliedDiscounts.fold(
+      0.0,
+      (sum, discount) => sum + discount.calculateDiscount(subtotal),
+    );
   }
 
   double get total => subtotal - discountAmount;
 
-  double get remainingBalance => total - _totalPaidSoFar;
+  // Remaining balance should never be negative - if overpaid, remaining is 0
+  double get remainingBalance {
+    final balance = total - _totalPaidSoFar;
+    return balance > 0 ? balance : 0.0;
+  }
 
-  double get changeAmount => _amountPaid - remainingBalance;
+  // Change amount is the amount customer should get back
+  // This happens when current payment (_amountPaid) exceeds remaining balance
+  double get changeAmount {
+    final currentPaymentExcess = _amountPaid - remainingBalance;
+    return currentPaymentExcess > 0 ? currentPaymentExcess : 0.0;
+  }
 
   bool get isOrderFullyPaid => _totalPaidSoFar >= total;
 
@@ -74,13 +91,69 @@ class ServiceOrderProvider with ChangeNotifier {
 
     if (existingOrder != null) {
       _currentOrder = existingOrder;
+
+      // Load associated customer if exists
+      if (existingOrder.customerId != null) {
+        await _loadCustomerForExistingOrder(existingOrder.customerId!);
+      }
+
+      // Set technician from existing order if available and no pre-selected technician
+      if (preSelectedTechnicianId == null &&
+          existingOrder.technicianIds.isNotEmpty) {
+        _selectedTechnicianId = existingOrder.technicianIds.first;
+      }
+
+      // Restore payment state from existing order
+      _totalPaidSoFar = existingOrder.totalPaidSoFar;
+      _partialPayments = List<double>.from(existingOrder.partialPayments);
+
+      // Restore applied discounts from existing order
+      _appliedDiscounts = List<ServiceOrderDiscount>.from(
+        existingOrder.appliedDiscounts,
+      );
+
+      // Show payment options if there are partial payments
+      if (_totalPaidSoFar > 0) {
+        _showPaymentOptions = true;
+      }
     } else {
+      // Creating a new order - reset all state
+      _resetOrderState();
       final orderNumber = await FirebaseService.generateDailyOrderNumber();
       _currentOrder = ServiceOrder(orderNumber: orderNumber);
+      _selectedTechnicianId =
+          preSelectedTechnicianId; // Reset after state reset
     }
 
     _isLoading = false;
     notifyListeners();
+  }
+
+  // Helper method to reset order state when creating a new order
+  void _resetOrderState() {
+    _orderItems.clear();
+    _selectedCustomer = null;
+    _showDiscountSection = false;
+    _showPaymentOptions = false;
+    _totalPaidSoFar = 0.0;
+    _amountPaid = 0.0;
+    _partialPayments.clear();
+    _appliedDiscounts.clear();
+    _isProcessingPayment = false;
+    _loyaltyPointsToEarn = 0;
+    _currentOrder = null;
+  }
+
+  Future<void> _loadCustomerForExistingOrder(String customerId) async {
+    try {
+      final customers = await FirebaseService.getCustomers();
+      final customer = customers.where((c) => c.id == customerId).firstOrNull;
+      if (customer != null) {
+        _selectedCustomer = customer;
+      }
+    } catch (e) {
+      debugPrint('Error loading customer for existing order: $e');
+    }
   }
 
   Future<void> loadOrderItems() async {
@@ -132,41 +205,42 @@ class ServiceOrderProvider with ChangeNotifier {
     notifyListeners();
   }
 
-  void applyDiscount(double discountAmount) {
-    if (_orderItems.isEmpty) return;
+  void applyDiscount(double discountAmount, {String? description}) {
+    if (_orderItems.isEmpty || discountAmount <= 0) return;
 
-    // First, clear any existing discounts
-    for (int i = 0; i < _orderItems.length; i++) {
-      _orderItems[i] = _orderItems[i].copyWith(discountAmount: 0.0);
-    }
+    // Create discount description
+    final discountDescription =
+        description ?? 'Fixed \$${discountAmount.toStringAsFixed(2)} discount';
 
-    // Apply new discount proportionally across all items
-    if (discountAmount > 0 && subtotal > 0) {
-      double remainingDiscount = discountAmount;
+    // Add the discount to the applied discounts list
+    final discount = ServiceOrderDiscount(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: discountDescription,
+      type: DiscountType.fixedAmount,
+      value: discountAmount,
+      description: discountDescription,
+    );
 
-      for (int i = 0; i < _orderItems.length; i++) {
-        final item = _orderItems[i];
-        final itemSubtotal = item.originalPrice * item.quantity;
+    _appliedDiscounts.add(discount);
+    _calculateLoyaltyPoints();
+    notifyListeners();
+  }
 
-        // Calculate proportional discount for this item
-        double itemDiscount;
-        if (i == _orderItems.length - 1) {
-          // For the last item, use remaining discount to avoid rounding errors
-          itemDiscount = remainingDiscount;
-        } else {
-          itemDiscount = (itemSubtotal / subtotal) * discountAmount;
-          remainingDiscount -= itemDiscount;
-        }
+  void applyPercentageDiscount(double percentage, {String? description}) {
+    if (_orderItems.isEmpty || percentage <= 0) return;
 
-        // Ensure item discount doesn't exceed item subtotal
-        itemDiscount = itemDiscount > itemSubtotal
-            ? itemSubtotal
-            : itemDiscount;
+    final discountDescription = description ?? '$percentage% discount';
 
-        _orderItems[i] = item.copyWith(discountAmount: itemDiscount);
-      }
-    }
+    // Add the percentage discount to the applied discounts list
+    final discount = ServiceOrderDiscount(
+      id: DateTime.now().millisecondsSinceEpoch.toString(),
+      name: discountDescription,
+      type: DiscountType.percentage,
+      value: percentage,
+      description: discountDescription,
+    );
 
+    _appliedDiscounts.add(discount);
     _calculateLoyaltyPoints();
     notifyListeners();
   }
@@ -184,6 +258,32 @@ class ServiceOrderProvider with ChangeNotifier {
   void addPartialPayment(double amount) {
     _partialPayments.add(amount);
     _totalPaidSoFar += amount;
+    notifyListeners();
+  }
+
+  void removeDiscount(String discountId) {
+    _appliedDiscounts.removeWhere((discount) => discount.id == discountId);
+    _calculateLoyaltyPoints();
+    notifyListeners();
+  }
+
+  void removeAllDiscounts() {
+    _appliedDiscounts.clear();
+    _calculateLoyaltyPoints();
+    notifyListeners();
+  }
+
+  void removePartialPayment(int index) {
+    if (index >= 0 && index < _partialPayments.length) {
+      _totalPaidSoFar -= _partialPayments[index];
+      _partialPayments.removeAt(index);
+      notifyListeners();
+    }
+  }
+
+  void clearAllPartialPayments() {
+    _partialPayments.clear();
+    _totalPaidSoFar = 0.0;
     notifyListeners();
   }
 
@@ -225,11 +325,51 @@ class ServiceOrderProvider with ChangeNotifier {
     notifyListeners();
 
     try {
-      await FirebaseService.saveServiceOrder(_currentOrder!);
-      // Save each order item separately
-      for (final item in _orderItems) {
-        await FirebaseService.saveServiceOrderItem(item);
+      // Collect technician IDs from order items and selected technician
+      final technicianIds = <String>{};
+      if (_selectedTechnicianId != null) {
+        technicianIds.add(_selectedTechnicianId!);
       }
+      for (final item in _orderItems) {
+        technicianIds.add(item.technicianId);
+      }
+
+      // If order doesn't have an ID, create one
+      String orderId =
+          _currentOrder!.id ??
+          FirebaseFirestore.instance.collection('service_orders').doc().id;
+
+      // Update order with collected technician IDs, customer ID, calculated totals, and payment info
+      final updatedOrder = _currentOrder!.copyWith(
+        id: orderId,
+        technicianIds: technicianIds.toList(),
+        customerId: _selectedCustomer?.id,
+        customerName: _selectedCustomer?.displayName,
+        subtotal: subtotal,
+        appliedDiscounts: List<ServiceOrderDiscount>.from(_appliedDiscounts),
+        discountAmount: discountAmount,
+        total: total,
+        totalPaidSoFar: _totalPaidSoFar,
+        partialPayments: List<double>.from(_partialPayments),
+        status: ServiceOrderStatus
+            .inProgress, // Set status to in-progress when saving
+      );
+
+      // Save the order first
+      await FirebaseService.saveServiceOrder(updatedOrder);
+      _currentOrder = updatedOrder;
+
+      // Update all order items with the correct serviceOrderId and save them
+      final updatedOrderItems = <ServiceOrderItem>[];
+      for (final item in _orderItems) {
+        final updatedItem = item.copyWith(serviceOrderId: orderId);
+        updatedOrderItems.add(updatedItem);
+        await FirebaseService.saveServiceOrderItem(updatedItem);
+      }
+
+      // Update the local order items list with the correct serviceOrderId
+      _orderItems.clear();
+      _orderItems.addAll(updatedOrderItems);
     } catch (e) {
       debugPrint('Error saving order: $e');
       rethrow;
@@ -246,16 +386,49 @@ class ServiceOrderProvider with ChangeNotifier {
     notifyListeners();
 
     try {
+      // Collect technician IDs from order items and selected technician
+      final technicianIds = <String>{};
+      if (_selectedTechnicianId != null) {
+        technicianIds.add(_selectedTechnicianId!);
+      }
+      for (final item in _orderItems) {
+        technicianIds.add(item.technicianId);
+      }
+
+      // If order doesn't have an ID, create one
+      String orderId =
+          _currentOrder!.id ??
+          FirebaseFirestore.instance.collection('service_orders').doc().id;
+
       final completedOrder = _currentOrder!.copyWith(
+        id: orderId,
         status: ServiceOrderStatus.completed,
         completedAt: DateTime.now(),
+        technicianIds: technicianIds.toList(),
+        customerId: _selectedCustomer?.id,
+        customerName: _selectedCustomer?.displayName,
+        subtotal: subtotal,
+        appliedDiscounts: List<ServiceOrderDiscount>.from(_appliedDiscounts),
+        discountAmount: discountAmount,
+        total: total,
+        totalPaidSoFar: _totalPaidSoFar,
+        partialPayments: List<double>.from(_partialPayments),
+        isPaid: true,
       );
 
       await FirebaseService.saveServiceOrder(completedOrder);
-      // Save each order item separately
+
+      // Update all order items with the correct serviceOrderId and save them
+      final updatedOrderItems = <ServiceOrderItem>[];
       for (final item in _orderItems) {
-        await FirebaseService.saveServiceOrderItem(item);
+        final updatedItem = item.copyWith(serviceOrderId: orderId);
+        updatedOrderItems.add(updatedItem);
+        await FirebaseService.saveServiceOrderItem(updatedItem);
       }
+
+      // Update the local order items list and current order
+      _orderItems.clear();
+      _orderItems.addAll(updatedOrderItems);
       _currentOrder = completedOrder;
     } catch (e) {
       debugPrint('Error completing order: $e');

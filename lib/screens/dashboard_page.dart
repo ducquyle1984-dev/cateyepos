@@ -797,18 +797,275 @@ class _HomeContentState extends State<_HomeContent> {
     );
   }
 
+  // Handle technician tile click - check for existing orders and ask user
+  Future<void> _handleTechnicianTileClick(Employee technician) async {
+    // Find existing incomplete orders for this technician
+    final existingOrders = _inProgressOrders.where((order) {
+      // Check if technician is assigned to this order
+      final technicianIds = _getOrderTechnicians(order);
+      return technicianIds.contains(technician.id);
+    }).toList();
+
+    if (existingOrders.isEmpty) {
+      // No existing orders, create new order
+      _navigateToNewOrder(technician);
+    } else if (existingOrders.length == 1) {
+      // One existing order, ask user to choose
+      _showOrderChoiceDialog(technician, existingOrders.first);
+    } else {
+      // Multiple existing orders, show list to choose from
+      _showMultipleOrdersDialog(technician, existingOrders);
+    }
+  }
+
+  void _navigateToNewOrder(Employee technician) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) =>
+            ServiceOrderPage(preSelectedTechnicianId: technician.id),
+      ),
+    ).then((_) => loadInProgressOrders());
+  }
+
+  void _navigateToExistingOrder(ServiceOrder order) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ServiceOrderPage(existingOrder: order),
+      ),
+    ).then((_) => loadInProgressOrders());
+  }
+
+  Future<void> _showOrderChoiceDialog(
+    Employee technician,
+    ServiceOrder existingOrder,
+  ) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: Colors.blue.shade600,
+              radius: 16,
+              child: Text(
+                technician.name.isNotEmpty
+                    ? technician.name[0].toUpperCase()
+                    : '?',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                technician.name,
+                style: const TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This technician has an existing incomplete order:',
+              style: TextStyle(color: Colors.grey.shade700),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.shade50,
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange.shade200),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Order #${existingOrder.orderNumber}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Status: ${existingOrder.status.displayName}',
+                    style: TextStyle(color: Colors.orange.shade700),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    'Total: \$${existingOrder.total.toStringAsFixed(2)}',
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
+                  if (existingOrder.customerName != null &&
+                      existingOrder.customerName!.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      'Customer: ${existingOrder.customerName}',
+                      style: TextStyle(color: Colors.grey.shade600),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'What would you like to do?',
+              style: TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop('cancel'),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.of(context).pop('new'),
+            icon: const Icon(Icons.add),
+            label: const Text('Create New Order'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+              foregroundColor: Colors.white,
+            ),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.of(context).pop('existing'),
+            icon: const Icon(Icons.edit),
+            label: const Text('Open Existing Order'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.blue.shade600,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (choice == 'new') {
+      _navigateToNewOrder(technician);
+    } else if (choice == 'existing') {
+      _navigateToExistingOrder(existingOrder);
+    }
+    // If 'cancel' or null, do nothing
+  }
+
+  Future<void> _showMultipleOrdersDialog(
+    Employee technician,
+    List<ServiceOrder> orders,
+  ) async {
+    final choice = await showDialog<dynamic>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            CircleAvatar(
+              backgroundColor: Colors.blue.shade600,
+              radius: 16,
+              child: Text(
+                technician.name.isNotEmpty
+                    ? technician.name[0].toUpperCase()
+                    : '?',
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                technician.name,
+                style: const TextStyle(fontSize: 18),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'This technician has ${orders.length} incomplete orders:',
+                style: TextStyle(color: Colors.grey.shade700),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                height: 200, // Constrain height for scrolling
+                child: ListView.builder(
+                  shrinkWrap: true,
+                  itemCount: orders.length,
+                  itemBuilder: (context, index) {
+                    final order = orders[index];
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 8),
+                      child: ListTile(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          side: BorderSide(color: Colors.orange.shade200),
+                        ),
+                        tileColor: Colors.orange.shade50,
+                        title: Text(
+                          'Order #${order.orderNumber}',
+                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        ),
+                        subtitle: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Status: ${order.status.displayName}'),
+                            Text('Total: \$${order.total.toStringAsFixed(2)}'),
+                            if (order.customerName != null &&
+                                order.customerName!.isNotEmpty)
+                              Text('Customer: ${order.customerName}'),
+                          ],
+                        ),
+                        trailing: const Icon(Icons.arrow_forward_ios, size: 16),
+                        onTap: () => Navigator.of(context).pop(order),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop('cancel'),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () => Navigator.of(context).pop('new'),
+            icon: const Icon(Icons.add),
+            label: const Text('Create New Order'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green.shade600,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    if (choice == 'new') {
+      _navigateToNewOrder(technician);
+    } else if (choice is ServiceOrder) {
+      _navigateToExistingOrder(choice);
+    }
+    // If 'cancel' or null, do nothing
+  }
+
   Widget _buildTechnicianTile(Employee technician) {
     return GestureDetector(
-      onTap: () {
-        // Navigate to ServiceOrderPage with pre-selected technician
-        Navigator.push(
-          context,
-          MaterialPageRoute(
-            builder: (context) =>
-                ServiceOrderPage(preSelectedTechnicianId: technician.id),
-          ),
-        ).then((_) => loadInProgressOrders());
-      },
+      onTap: () => _handleTechnicianTileClick(technician),
       child: Container(
         decoration: BoxDecoration(
           color: Colors.white,
@@ -1157,28 +1414,1364 @@ class _AppointmentsContent extends StatelessWidget {
   }
 }
 
-class _ReportsContent extends StatelessWidget {
+class _ReportsContent extends StatefulWidget {
   const _ReportsContent();
 
   @override
+  State<_ReportsContent> createState() => _ReportsContentState();
+}
+
+class _ReportsContentState extends State<_ReportsContent> {
+  int _selectedReportIndex = 0;
+
+  final List<Map<String, dynamic>> _reportTypes = [
+    {'title': 'Daily Summary', 'icon': Icons.today},
+    {'title': 'Transaction Details', 'icon': Icons.receipt_long},
+    {'title': 'Technician Performance', 'icon': Icons.person_outline},
+    {'title': 'Service Analysis', 'icon': Icons.analytics},
+  ];
+
+  @override
   Widget build(BuildContext context) {
-    return const Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+    return Padding(
+      padding: const EdgeInsets.all(16.0),
+      child: Row(
         children: [
-          Icon(Icons.analytics, size: 64, color: Colors.grey),
-          SizedBox(height: 16),
-          Text(
-            'Reports',
-            style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+          // Report types sidebar
+          Container(
+            width: 250,
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: Colors.grey.shade300),
+            ),
+            child: Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade700,
+                    borderRadius: const BorderRadius.only(
+                      topLeft: Radius.circular(8),
+                      topRight: Radius.circular(8),
+                    ),
+                  ),
+                  child: const Row(
+                    children: [
+                      Icon(Icons.analytics, color: Colors.white),
+                      SizedBox(width: 8),
+                      Text(
+                        'Reports',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    padding: const EdgeInsets.all(8),
+                    itemCount: _reportTypes.length,
+                    itemBuilder: (context, index) {
+                      final report = _reportTypes[index];
+                      final isSelected = index == _selectedReportIndex;
+
+                      return Card(
+                        margin: const EdgeInsets.symmetric(vertical: 2),
+                        elevation: isSelected ? 3 : 1,
+                        color: isSelected ? Colors.blue.shade50 : null,
+                        child: ListTile(
+                          leading: Icon(
+                            report['icon'],
+                            color: isSelected
+                                ? Colors.blue.shade700
+                                : Colors.grey.shade600,
+                          ),
+                          title: Text(
+                            report['title'],
+                            style: TextStyle(
+                              fontWeight: isSelected
+                                  ? FontWeight.bold
+                                  : FontWeight.normal,
+                              color: isSelected ? Colors.blue.shade700 : null,
+                            ),
+                          ),
+                          onTap: () {
+                            setState(() {
+                              _selectedReportIndex = index;
+                            });
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
           ),
-          SizedBox(height: 8),
-          Text(
-            'Analytics and reporting coming soon!',
-            style: TextStyle(fontSize: 16, color: Colors.grey),
+          const SizedBox(width: 16),
+          // Report content area
+          Expanded(child: _buildReportContent()),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildReportContent() {
+    switch (_selectedReportIndex) {
+      case 0:
+        return const _DailySummaryReport();
+      case 1:
+        return const _TransactionDetailsReport();
+      case 2:
+        return _buildComingSoonReport('Technician Performance');
+      case 3:
+        return _buildComingSoonReport('Service Analysis');
+      default:
+        return _buildComingSoonReport('Unknown Report');
+    }
+  }
+
+  Widget _buildComingSoonReport(String reportName) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.construction, size: 64, color: Colors.orange.shade400),
+            const SizedBox(height: 16),
+            Text(
+              reportName,
+              style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Coming soon!',
+              style: TextStyle(fontSize: 16, color: Colors.grey.shade600),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DailySummaryReport extends StatefulWidget {
+  const _DailySummaryReport();
+
+  @override
+  State<_DailySummaryReport> createState() => _DailySummaryReportState();
+}
+
+class _DailySummaryReportState extends State<_DailySummaryReport> {
+  DateTime _selectedDate = DateTime.now();
+  List<ServiceOrder> _transactions = [];
+  Map<String, List<ServiceOrderItem>> _transactionItems = {};
+  bool _isLoading = false;
+  String? _selectedTechnicianId;
+  List<String> _availableTechnicians = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTransactions();
+  }
+
+  Future<void> _loadTransactions() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final startOfDay = DateTime(
+        _selectedDate.year,
+        _selectedDate.month,
+        _selectedDate.day,
+      );
+      final endOfDay = startOfDay
+          .add(const Duration(days: 1))
+          .subtract(const Duration(microseconds: 1));
+
+      final transactions = await FirebaseService.getServiceOrdersByDateRange(
+        startOfDay,
+        endOfDay,
+      );
+
+      // Get all technicians from transactions
+      final technicianIds = <String>{};
+      for (final transaction in transactions) {
+        technicianIds.addAll(transaction.technicianIds);
+      }
+
+      final filteredTransactions = transactions
+          .where(
+            (order) =>
+                order.status == ServiceOrderStatus.completed ||
+                order.status == ServiceOrderStatus.cancelled,
+          )
+          .toList();
+
+      // Load service order items for each transaction
+      final Map<String, List<ServiceOrderItem>> itemsMap = {};
+      for (final transaction in filteredTransactions) {
+        if (transaction.id != null) {
+          final items = await FirebaseService.getServiceOrderItems(
+            transaction.id!,
+          );
+          itemsMap[transaction.id!] = items;
+        }
+      }
+
+      setState(() {
+        _transactions = filteredTransactions;
+        _transactionItems = itemsMap;
+        _availableTechnicians = technicianIds.toList();
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading transactions: $e')),
+        );
+      }
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _selectDate() async {
+    final DateTime? picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+    );
+
+    if (picked != null && picked != _selectedDate) {
+      setState(() {
+        _selectedDate = picked;
+        _selectedTechnicianId = null; // Reset technician filter
+      });
+      _loadTransactions();
+    }
+  }
+
+  List<ServiceOrder> get _filteredTransactions {
+    if (_selectedTechnicianId == null) {
+      return _transactions;
+    }
+    return _transactions
+        .where(
+          (transaction) =>
+              transaction.technicianIds.contains(_selectedTechnicianId),
+        )
+        .toList();
+  }
+
+  double get _totalAmount {
+    return _filteredTransactions
+        .where((t) => t.status != ServiceOrderStatus.cancelled)
+        .fold<double>(0, (sum, t) => sum + t.total);
+  }
+
+  int get _voidedCount {
+    return _filteredTransactions
+        .where((t) => t.status == ServiceOrderStatus.cancelled)
+        .length;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.green.shade50,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
+              ),
+              border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.today, color: Colors.green),
+                const SizedBox(width: 8),
+                const Text(
+                  'Daily Summary',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                // Technician filter
+                if (_availableTechnicians.isNotEmpty)
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: DropdownButton<String?>(
+                      hint: const Text('All Technicians'),
+                      value: _selectedTechnicianId,
+                      underline: const SizedBox(),
+                      items: [
+                        const DropdownMenuItem<String?>(
+                          value: null,
+                          child: Text('All Technicians'),
+                        ),
+                        ..._availableTechnicians.map((techId) {
+                          return DropdownMenuItem<String?>(
+                            value: techId,
+                            child: Text('Technician $techId'),
+                          );
+                        }),
+                      ],
+                      onChanged: (value) {
+                        setState(() {
+                          _selectedTechnicianId = value;
+                        });
+                      },
+                    ),
+                  ),
+                const SizedBox(width: 12),
+                // Date selector
+                InkWell(
+                  onTap: _selectDate,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.calendar_today, size: 18),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${_selectedDate.day}/${_selectedDate.month}/${_selectedDate.year}',
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: _loadTransactions,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Refresh'),
+                ),
+              ],
+            ),
+          ),
+          // Summary cards
+          Container(
+            padding: const EdgeInsets.all(16),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Card(
+                    color: Colors.blue.shade50,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.receipt,
+                            color: Colors.blue.shade600,
+                            size: 32,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '${_filteredTransactions.where((t) => t.status != ServiceOrderStatus.cancelled).length}',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade700,
+                            ),
+                          ),
+                          const Text('Transactions'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: Card(
+                    color: Colors.green.shade50,
+                    child: Padding(
+                      padding: const EdgeInsets.all(16),
+                      child: Column(
+                        children: [
+                          Icon(
+                            Icons.attach_money,
+                            color: Colors.green.shade600,
+                            size: 32,
+                          ),
+                          const SizedBox(height: 8),
+                          Text(
+                            '\$${_totalAmount.toStringAsFixed(2)}',
+                            style: TextStyle(
+                              fontSize: 24,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.green.shade700,
+                            ),
+                          ),
+                          const Text('Total Sales'),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+                if (_voidedCount > 0)
+                  Expanded(
+                    child: Card(
+                      color: Colors.red.shade50,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.cancel,
+                              color: Colors.red.shade600,
+                              size: 32,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              '$_voidedCount',
+                              style: TextStyle(
+                                fontSize: 24,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.red.shade700,
+                              ),
+                            ),
+                            const Text('Voided'),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+          // Content
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _filteredTransactions.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.receipt_outlined,
+                          size: 64,
+                          color: Colors.grey,
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          'No transactions found',
+                          style: TextStyle(fontSize: 18, color: Colors.grey),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Try selecting a different date',
+                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  )
+                : SingleChildScrollView(
+                    child: DataTable(
+                      columnSpacing: 20,
+                      headingRowColor: MaterialStateColor.resolveWith(
+                        (states) => Colors.grey.shade100,
+                      ),
+                      columns: const [
+                        DataColumn(
+                          label: Text(
+                            'Order #',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Start - End Time',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Customer',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Services & Technicians',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Payment',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Total',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Status',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Actions',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                      rows: _filteredTransactions.map((transaction) {
+                        final items = _transactionItems[transaction.id] ?? [];
+
+                        return DataRow(
+                          cells: [
+                            DataCell(Text(transaction.orderNumber)),
+                            DataCell(
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Start: ${transaction.createdAt.hour.toString().padLeft(2, '0')}:${transaction.createdAt.minute.toString().padLeft(2, '0')}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  if (transaction.completedAt != null)
+                                    Text(
+                                      'End: ${transaction.completedAt!.hour.toString().padLeft(2, '0')}:${transaction.completedAt!.minute.toString().padLeft(2, '0')}',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            DataCell(
+                              Text(transaction.customerName ?? 'Walk-in'),
+                            ),
+                            DataCell(
+                              Container(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 200,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: items.map((item) {
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 1,
+                                      ),
+                                      child: Text(
+                                        '${item.serviceName} - ${item.technicianName}',
+                                        style: const TextStyle(fontSize: 12),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                transaction.paymentMethod?.toUpperCase() ??
+                                    'N/A',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  color: _getPaymentMethodColor(
+                                    transaction.paymentMethod,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                '\$${transaction.total.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color:
+                                      transaction.status ==
+                                          ServiceOrderStatus.cancelled
+                                      ? Colors.red.shade300
+                                      : Colors.green,
+                                  decoration:
+                                      transaction.status ==
+                                          ServiceOrderStatus.cancelled
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (transaction.status ==
+                                      ServiceOrderStatus.cancelled)
+                                    Icon(
+                                      Icons.cancel,
+                                      color: Colors.red,
+                                      size: 16,
+                                    ),
+                                  const SizedBox(width: 4),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _getStatusColor(
+                                        transaction.status,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      transaction.status ==
+                                              ServiceOrderStatus.cancelled
+                                          ? 'VOIDED'
+                                          : transaction.status.displayName,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            DataCell(
+                              transaction.status != ServiceOrderStatus.cancelled
+                                  ? PopupMenuButton<String>(
+                                      icon: const Icon(
+                                        Icons.more_vert,
+                                        size: 18,
+                                      ),
+                                      onSelected: (value) {
+                                        if (value == 'void') {
+                                          _voidTransaction(transaction);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem<String>(
+                                          value: 'void',
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.cancel,
+                                                color: Colors.red,
+                                                size: 16,
+                                              ),
+                                              SizedBox(width: 8),
+                                              Text('Void Transaction'),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
+                        );
+                      }).toList(),
+                    ),
+                  ),
           ),
         ],
       ),
     );
+  }
+
+  Color _getStatusColor(ServiceOrderStatus status) {
+    switch (status) {
+      case ServiceOrderStatus.newOrder:
+        return Colors.blue;
+      case ServiceOrderStatus.inProgress:
+        return Colors.orange;
+      case ServiceOrderStatus.completed:
+        return Colors.green;
+      case ServiceOrderStatus.cancelled:
+        return Colors.red;
+    }
+  }
+
+  Color _getPaymentMethodColor(String? paymentMethod) {
+    if (paymentMethod == null) return Colors.grey;
+
+    switch (paymentMethod.toLowerCase()) {
+      case 'cash':
+        return Colors.green.shade700;
+      case 'credit':
+        return Colors.blue.shade700;
+      case 'debit':
+        return Colors.purple.shade700;
+      default:
+        return Colors.grey.shade700;
+    }
+  }
+
+  Future<void> _voidTransaction(ServiceOrder transaction) async {
+    final TextEditingController reasonController = TextEditingController();
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange.shade600),
+            const SizedBox(width: 8),
+            const Text('Void Transaction'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Transaction #${transaction.orderNumber}'),
+            Text('Amount: \$${transaction.total.toStringAsFixed(2)}'),
+            const SizedBox(height: 16),
+            const Text(
+              'Please provide a reason for voiding this transaction:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: reasonController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'e.g., Created by mistake, Customer requested refund',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (reasonController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please provide a reason')),
+                );
+                return;
+              }
+              Navigator.of(context).pop(true);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Void Transaction'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && reasonController.text.trim().isNotEmpty) {
+      try {
+        // Update the transaction with void status and reason
+        final voidedTransaction = transaction.copyWith(
+          status: ServiceOrderStatus.cancelled,
+          notes:
+              '${transaction.notes ?? ''}\n\nVOIDED: ${reasonController.text.trim()}\nVoided by: ${DateTime.now().toString()}',
+        );
+
+        await FirebaseService.updateServiceOrder(voidedTransaction);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Transaction voided successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          _loadTransactions(); // Refresh the list
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error voiding transaction: $e')),
+          );
+        }
+      }
+    }
+  }
+}
+
+class _TransactionDetailsReport extends StatefulWidget {
+  const _TransactionDetailsReport();
+
+  @override
+  State<_TransactionDetailsReport> createState() =>
+      _TransactionDetailsReportState();
+}
+
+class _TransactionDetailsReportState extends State<_TransactionDetailsReport> {
+  DateTime _startDate = DateTime.now();
+  DateTime _endDate = DateTime.now();
+  List<ServiceOrder> _transactions = [];
+  Map<String, List<ServiceOrderItem>> _transactionItems = {};
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadTransactions();
+  }
+
+  Future<void> _loadTransactions() async {
+    setState(() {
+      _isLoading = true;
+    });
+
+    try {
+      final transactions = await FirebaseService.getServiceOrdersByDateRange(
+        _startDate,
+        _endDate,
+      );
+
+      final filteredTransactions = transactions
+          .where((order) => order.status == ServiceOrderStatus.completed)
+          .toList();
+
+      // Load service order items for each transaction
+      final Map<String, List<ServiceOrderItem>> itemsMap = {};
+      for (final transaction in filteredTransactions) {
+        if (transaction.id != null) {
+          final items = await FirebaseService.getServiceOrderItems(
+            transaction.id!,
+          );
+          itemsMap[transaction.id!] = items;
+        }
+      }
+
+      setState(() {
+        _transactions = filteredTransactions;
+        _transactionItems = itemsMap;
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error loading transactions: $e')),
+        );
+      }
+    } finally {
+      setState(() {
+        _isLoading = false;
+      });
+    }
+  }
+
+  Future<void> _selectDateRange() async {
+    final DateTimeRange? picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime.now(),
+      initialDateRange: DateTimeRange(start: _startDate, end: _endDate),
+    );
+
+    if (picked != null) {
+      setState(() {
+        _startDate = picked.start;
+        _endDate = picked.end;
+      });
+      _loadTransactions();
+    }
+  }
+
+  Future<void> _voidTransaction(ServiceOrder transaction) async {
+    final TextEditingController reasonController = TextEditingController();
+
+    final bool? confirmed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Icon(Icons.warning, color: Colors.orange.shade600),
+            const SizedBox(width: 8),
+            const Text('Void Transaction'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Transaction #${transaction.orderNumber}'),
+            Text('Amount: \$${transaction.total.toStringAsFixed(2)}'),
+            const SizedBox(height: 16),
+            const Text(
+              'Please provide a reason for voiding this transaction:',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            TextField(
+              controller: reasonController,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                hintText: 'e.g., Created by mistake, Customer requested refund',
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (reasonController.text.trim().isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Please provide a reason')),
+                );
+                return;
+              }
+              Navigator.of(context).pop(true);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Void Transaction'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true && reasonController.text.trim().isNotEmpty) {
+      try {
+        // Update the transaction with void status and reason
+        final voidedTransaction = transaction.copyWith(
+          status: ServiceOrderStatus.cancelled,
+          notes:
+              '${transaction.notes ?? ''}\n\nVOIDED: ${reasonController.text.trim()}\nVoided by: ${DateTime.now().toString()}',
+        );
+
+        await FirebaseService.updateServiceOrder(voidedTransaction);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Transaction voided successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          _loadTransactions(); // Refresh the list
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Error voiding transaction: $e')),
+          );
+        }
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.blue.shade50,
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(8),
+                topRight: Radius.circular(8),
+              ),
+              border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.receipt_long, color: Colors.blue),
+                const SizedBox(width: 8),
+                const Text(
+                  'Transaction Details',
+                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                ),
+                const Spacer(),
+                // Date range selector
+                InkWell(
+                  onTap: _selectDateRange,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(6),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(Icons.date_range, size: 18),
+                        const SizedBox(width: 4),
+                        Text(
+                          '${_startDate.day}/${_startDate.month}/${_startDate.year} - ${_endDate.day}/${_endDate.month}/${_endDate.year}',
+                          style: const TextStyle(fontSize: 14),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                ElevatedButton.icon(
+                  onPressed: _loadTransactions,
+                  icon: const Icon(Icons.refresh, size: 18),
+                  label: const Text('Refresh'),
+                ),
+              ],
+            ),
+          ),
+          // Content
+          Expanded(
+            child: _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _transactions.isEmpty
+                ? const Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.receipt_outlined,
+                          size: 64,
+                          color: Colors.grey,
+                        ),
+                        SizedBox(height: 16),
+                        Text(
+                          'No transactions found',
+                          style: TextStyle(fontSize: 18, color: Colors.grey),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Try adjusting the date range',
+                          style: TextStyle(fontSize: 14, color: Colors.grey),
+                        ),
+                      ],
+                    ),
+                  )
+                : SingleChildScrollView(
+                    child: DataTable(
+                      columnSpacing: 20,
+                      headingRowColor: MaterialStateColor.resolveWith(
+                        (states) => Colors.grey.shade100,
+                      ),
+                      columns: const [
+                        DataColumn(
+                          label: Text(
+                            'Order #',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Start - End Date',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Customer',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Services & Technicians',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Payment',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Total',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Status',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        DataColumn(
+                          label: Text(
+                            'Actions',
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                      ],
+                      rows: _transactions.map((transaction) {
+                        final items = _transactionItems[transaction.id] ?? [];
+
+                        return DataRow(
+                          cells: [
+                            DataCell(Text(transaction.orderNumber)),
+                            DataCell(
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    'Start: ${transaction.createdAt.day}/${transaction.createdAt.month}/${transaction.createdAt.year} ${transaction.createdAt.hour.toString().padLeft(2, '0')}:${transaction.createdAt.minute.toString().padLeft(2, '0')}',
+                                    style: const TextStyle(fontSize: 12),
+                                  ),
+                                  if (transaction.completedAt != null)
+                                    Text(
+                                      'End: ${transaction.completedAt!.day}/${transaction.completedAt!.month}/${transaction.completedAt!.year} ${transaction.completedAt!.hour.toString().padLeft(2, '0')}:${transaction.completedAt!.minute.toString().padLeft(2, '0')}',
+                                      style: const TextStyle(fontSize: 12),
+                                    ),
+                                ],
+                              ),
+                            ),
+                            DataCell(
+                              Text(transaction.customerName ?? 'Walk-in'),
+                            ),
+                            DataCell(
+                              Container(
+                                constraints: const BoxConstraints(
+                                  maxWidth: 200,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: items.map((item) {
+                                    return Padding(
+                                      padding: const EdgeInsets.symmetric(
+                                        vertical: 1,
+                                      ),
+                                      child: Text(
+                                        '${item.serviceName} - ${item.technicianName}',
+                                        style: const TextStyle(fontSize: 12),
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                    );
+                                  }).toList(),
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                transaction.paymentMethod?.toUpperCase() ??
+                                    'N/A',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  color: _getPaymentMethodColor(
+                                    transaction.paymentMethod,
+                                  ),
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Text(
+                                '\$${transaction.total.toStringAsFixed(2)}',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color:
+                                      transaction.status ==
+                                          ServiceOrderStatus.cancelled
+                                      ? Colors.red.shade300
+                                      : Colors.green,
+                                  decoration:
+                                      transaction.status ==
+                                          ServiceOrderStatus.cancelled
+                                      ? TextDecoration.lineThrough
+                                      : null,
+                                ),
+                              ),
+                            ),
+                            DataCell(
+                              Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  if (transaction.status ==
+                                      ServiceOrderStatus.cancelled)
+                                    Icon(
+                                      Icons.cancel,
+                                      color: Colors.red,
+                                      size: 16,
+                                    ),
+                                  const SizedBox(width: 4),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 8,
+                                      vertical: 4,
+                                    ),
+                                    decoration: BoxDecoration(
+                                      color: _getStatusColor(
+                                        transaction.status,
+                                      ),
+                                      borderRadius: BorderRadius.circular(12),
+                                    ),
+                                    child: Text(
+                                      transaction.status ==
+                                              ServiceOrderStatus.cancelled
+                                          ? 'VOIDED'
+                                          : transaction.status.displayName,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            DataCell(
+                              transaction.status != ServiceOrderStatus.cancelled
+                                  ? PopupMenuButton<String>(
+                                      icon: const Icon(
+                                        Icons.more_vert,
+                                        size: 18,
+                                      ),
+                                      onSelected: (value) {
+                                        if (value == 'void') {
+                                          _voidTransaction(transaction);
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem<String>(
+                                          value: 'void',
+                                          child: Row(
+                                            children: [
+                                              Icon(
+                                                Icons.cancel,
+                                                color: Colors.red,
+                                                size: 16,
+                                              ),
+                                              SizedBox(width: 8),
+                                              Text('Void Transaction'),
+                                            ],
+                                          ),
+                                        ),
+                                      ],
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                          ],
+                        );
+                      }).toList(),
+                    ),
+                  ),
+          ),
+          // Footer with summary
+          if (_transactions.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: const BorderRadius.only(
+                  bottomLeft: Radius.circular(8),
+                  bottomRight: Radius.circular(8),
+                ),
+                border: Border(top: BorderSide(color: Colors.grey.shade300)),
+              ),
+              child: Row(
+                children: [
+                  Text(
+                    'Total Transactions: ${_transactions.length}',
+                    style: const TextStyle(fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(width: 24),
+                  Text(
+                    'Total Amount: \$${_transactions.fold<double>(0, (sum, t) => sum + t.total).toStringAsFixed(2)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      color: Colors.green,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Color _getStatusColor(ServiceOrderStatus status) {
+    switch (status) {
+      case ServiceOrderStatus.newOrder:
+        return Colors.blue;
+      case ServiceOrderStatus.inProgress:
+        return Colors.orange;
+      case ServiceOrderStatus.completed:
+        return Colors.green;
+      case ServiceOrderStatus.cancelled:
+        return Colors.red;
+    }
+  }
+
+  Color _getPaymentMethodColor(String? paymentMethod) {
+    if (paymentMethod == null) return Colors.grey;
+
+    switch (paymentMethod.toLowerCase()) {
+      case 'cash':
+        return Colors.green.shade700;
+      case 'credit':
+        return Colors.blue.shade700;
+      case 'debit':
+        return Colors.purple.shade700;
+      default:
+        return Colors.grey.shade700;
+    }
   }
 }
