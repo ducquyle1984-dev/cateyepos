@@ -438,18 +438,7 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                     ],
                   ),
                 )
-              : ListView.builder(
-                  itemCount: orderProvider.orderItems.length,
-                  itemBuilder: (context, index) {
-                    final item = orderProvider.orderItems[index];
-                    return _buildOrderItemCard(
-                      item,
-                      index,
-                      orderProvider,
-                      catalogProvider,
-                    );
-                  },
-                ),
+              : _buildGroupedOrderItems(orderProvider, catalogProvider),
         ),
 
         // Order Total Section
@@ -463,16 +452,118 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
     );
   }
 
+  Widget _buildGroupedOrderItems(
+    ServiceOrderProvider orderProvider,
+    CatalogProvider catalogProvider,
+  ) {
+    // Group items by technician ID
+    final Map<String, List<ServiceOrderItem>> groupedItems = {};
+    
+    for (int i = 0; i < orderProvider.orderItems.length; i++) {
+      final item = orderProvider.orderItems[i];
+      final technicianId = item.technicianId;
+      
+      if (!groupedItems.containsKey(technicianId)) {
+        groupedItems[technicianId] = [];
+      }
+      groupedItems[technicianId]!.add(item);
+    }
+
+    return ListView.builder(
+      itemCount: groupedItems.length,
+      itemBuilder: (context, groupIndex) {
+        final technicianId = groupedItems.keys.elementAt(groupIndex);
+        final items = groupedItems[technicianId]!;
+        final technicianName = items.first.technicianName;
+        
+        return Card(
+          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Technician header
+                Container(
+                  padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Row(
+                    children: [
+                      CircleAvatar(
+                        radius: 16,
+                        backgroundColor: Colors.blue.shade600,
+                        child: Text(
+                          technicianName.substring(0, 1).toUpperCase(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          technicianName,
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: Colors.blue.shade800,
+                          ),
+                        ),
+                      ),
+                      Text(
+                        '${items.length} service${items.length > 1 ? 's' : ''}',
+                        style: TextStyle(
+                          color: Colors.blue.shade600,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Items for this technician
+                ...items.map((item) {
+                  final originalIndex = orderProvider.orderItems.indexOf(item);
+                  return _buildOrderItemCard(
+                    item,
+                    originalIndex,
+                    orderProvider,
+                    catalogProvider,
+                    showTechnician: false, // Don't show technician name in grouped view
+                  );
+                }),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildOrderItemCard(
     ServiceOrderItem item,
     int index,
     ServiceOrderProvider orderProvider,
-    CatalogProvider catalogProvider,
-  ) {
+    CatalogProvider catalogProvider, {
+    bool showTechnician = true,
+  }) {
     return Card(
-      margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      margin: showTechnician 
+          ? const EdgeInsets.symmetric(horizontal: 8, vertical: 4)
+          : const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
+      elevation: showTechnician ? 1 : 0,
+      color: showTechnician ? null : Colors.grey.shade50,
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: showTechnician 
+            ? const EdgeInsets.all(12)
+            : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -492,8 +583,10 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 4),
-            Row(children: [Text('Technician: ${item.technicianName}')]),
+            if (showTechnician) ...[
+              const SizedBox(height: 4),
+              Row(children: [Text('Technician: ${item.technicianName}')]),
+            ],
             const SizedBox(height: 4),
             Row(
               children: [
