@@ -716,6 +716,37 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
             ],
           ),
           // Payment information
+          if (orderProvider.selectedPaymentMethod != null) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Text('Payment Method:', style: TextStyle(fontSize: 16)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _getPaymentMethodColor(
+                      orderProvider.selectedPaymentMethod!,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    _getPaymentMethodDisplayName(
+                      orderProvider.selectedPaymentMethod!,
+                    ),
+                    style: const TextStyle(
+                      fontSize: 14,
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
           if (orderProvider.totalPaidSoFar > 0) ...[
             const SizedBox(height: 8),
             Row(
@@ -909,6 +940,17 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
                     foregroundColor: Colors.white,
                   ),
                   child: const Text('Credit'),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton(
+                  onPressed: () => _processOtherPayment(orderProvider),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.orange,
+                    foregroundColor: Colors.white,
+                  ),
+                  child: const Text('Other'),
                 ),
               ),
             ],
@@ -1261,6 +1303,9 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   }
 
   void _showCashPaymentModal(ServiceOrderProvider orderProvider) {
+    // Set payment method to cash
+    orderProvider.setPaymentMethod(PaymentMethod.cash);
+
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -1778,8 +1823,111 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
   }
 
   void _processCreditPayment(ServiceOrderProvider orderProvider) {
-    // Placeholder for credit payment processing
-    debugPrint('Credit payment processing not implemented yet');
+    // Set payment method to credit
+    orderProvider.setPaymentMethod(PaymentMethod.credit);
+
+    // Set the amount paid to the remaining balance (full payment)
+    orderProvider.setAmountPaid(orderProvider.remainingBalance);
+
+    // Show confirmation dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.credit_card, color: Colors.blue),
+            const SizedBox(width: 8),
+            const Text('Credit Card Payment'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Amount: \$${orderProvider.remainingBalance.toStringAsFixed(2)}',
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Please process the credit card payment on your terminal.',
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Click "Complete Payment" when the transaction is approved.',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => _handlePaymentCompletion(orderProvider),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Complete Payment'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _processOtherPayment(ServiceOrderProvider orderProvider) {
+    // Set payment method to other
+    orderProvider.setPaymentMethod(PaymentMethod.other);
+
+    // Set the amount paid to the remaining balance (full payment)
+    orderProvider.setAmountPaid(orderProvider.remainingBalance);
+
+    // Show confirmation dialog
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.payment, color: Colors.orange),
+            const SizedBox(width: 8),
+            const Text('Other Payment'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              'Amount: \$${orderProvider.remainingBalance.toStringAsFixed(2)}',
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Please process the payment using your preferred method.',
+            ),
+            const SizedBox(height: 8),
+            const Text('(e.g., Check, Gift Card, Store Credit, etc.)'),
+            const SizedBox(height: 16),
+            const Text(
+              'Click "Complete Payment" when the transaction is completed.',
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            onPressed: () => _handlePaymentCompletion(orderProvider),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.green,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Complete Payment'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _removePartialPayment(ServiceOrderProvider orderProvider, int index) {
@@ -2224,5 +2372,27 @@ class _ServiceOrderPageState extends State<ServiceOrderPage> {
         ],
       ),
     );
+  }
+
+  Color _getPaymentMethodColor(PaymentMethod paymentMethod) {
+    switch (paymentMethod) {
+      case PaymentMethod.cash:
+        return Colors.green;
+      case PaymentMethod.credit:
+        return Colors.blue;
+      case PaymentMethod.other:
+        return Colors.orange;
+    }
+  }
+
+  String _getPaymentMethodDisplayName(PaymentMethod paymentMethod) {
+    switch (paymentMethod) {
+      case PaymentMethod.cash:
+        return 'Cash';
+      case PaymentMethod.credit:
+        return 'Credit Card';
+      case PaymentMethod.other:
+        return 'Other';
+    }
   }
 }

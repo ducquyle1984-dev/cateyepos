@@ -5,7 +5,7 @@ import '../models/service_order_item.dart';
 import '../models/customer.dart';
 import '../services/firebase_service.dart';
 
-enum PaymentMethod { cash, credit }
+enum PaymentMethod { cash, credit, other }
 
 class ServiceOrderProvider with ChangeNotifier {
   ServiceOrder? _currentOrder;
@@ -26,6 +26,7 @@ class ServiceOrderProvider with ChangeNotifier {
   double _totalPaidSoFar = 0.0;
   List<double> _partialPayments = [];
   bool _isProcessingPayment = false;
+  PaymentMethod? _selectedPaymentMethod;
 
   // Loyalty points settings
   double _pointsPerDollar = 1.0;
@@ -45,6 +46,7 @@ class ServiceOrderProvider with ChangeNotifier {
   double get totalPaidSoFar => _totalPaidSoFar;
   List<double> get partialPayments => _partialPayments;
   bool get isProcessingPayment => _isProcessingPayment;
+  PaymentMethod? get selectedPaymentMethod => _selectedPaymentMethod;
   double get pointsPerDollar => _pointsPerDollar;
   int get loyaltyPointsToEarn => _loyaltyPointsToEarn;
   List<ServiceOrderDiscount> get appliedDiscounts => _appliedDiscounts;
@@ -140,6 +142,7 @@ class ServiceOrderProvider with ChangeNotifier {
     _partialPayments.clear();
     _appliedDiscounts.clear();
     _isProcessingPayment = false;
+    _selectedPaymentMethod = null;
     _loyaltyPointsToEarn = 0;
     _currentOrder = null;
   }
@@ -255,6 +258,11 @@ class ServiceOrderProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  void setPaymentMethod(PaymentMethod paymentMethod) {
+    _selectedPaymentMethod = paymentMethod;
+    notifyListeners();
+  }
+
   void addPartialPayment(double amount) {
     _partialPayments.add(amount);
     _totalPaidSoFar += amount;
@@ -292,6 +300,7 @@ class ServiceOrderProvider with ChangeNotifier {
     _totalPaidSoFar = 0.0;
     _partialPayments.clear();
     _showPaymentOptions = false;
+    _selectedPaymentMethod = null;
     notifyListeners();
   }
 
@@ -413,6 +422,7 @@ class ServiceOrderProvider with ChangeNotifier {
         total: total,
         totalPaidSoFar: _totalPaidSoFar,
         partialPayments: List<double>.from(_partialPayments),
+        paymentMethod: _selectedPaymentMethod?.name,
         isPaid: true,
       );
 

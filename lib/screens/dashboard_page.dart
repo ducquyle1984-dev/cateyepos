@@ -1964,6 +1964,8 @@ class _DailySummaryReportState extends State<_DailySummaryReport> {
                         final items = _transactionItems[transaction.id] ?? [];
 
                         return DataRow(
+                          onSelectChanged: (_) =>
+                              _showOrderDetailsModal(transaction),
                           cells: [
                             DataCell(Text(transaction.orderNumber)),
                             DataCell(
@@ -1991,21 +1993,42 @@ class _DailySummaryReportState extends State<_DailySummaryReport> {
                                 constraints: const BoxConstraints(
                                   maxWidth: 200,
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: items.map((item) {
-                                    return Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 1,
-                                      ),
-                                      child: Text(
-                                        '${item.serviceName} - ${item.technicianName}',
-                                        style: const TextStyle(fontSize: 12),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    );
-                                  }).toList(),
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      ...items.take(3).map((item) {
+                                        return Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 1,
+                                          ),
+                                          child: Text(
+                                            '${item.serviceName} - ${item.technicianName}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        );
+                                      }),
+                                      if (items.length > 3)
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 1,
+                                          ),
+                                          child: Text(
+                                            '...and ${items.length - 3}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontStyle: FontStyle.italic,
+                                              color: Colors.blue,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -2148,73 +2171,130 @@ class _DailySummaryReportState extends State<_DailySummaryReport> {
   }
 
   Future<void> _voidTransaction(ServiceOrder transaction) async {
-    final TextEditingController reasonController = TextEditingController();
+    final List<String> predefinedReasons = [
+      'Created by mistake',
+      'Customer requested refund',
+      'Incorrect service/price',
+      'Payment issue',
+      'Service not completed',
+      'Duplicate transaction',
+      'System error',
+      'Other (specify below)',
+    ];
 
-    final bool? confirmed = await showDialog<bool>(
+    String? selectedReason;
+    final TextEditingController customReasonController =
+        TextEditingController();
+
+    final String? confirmedReason = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.warning, color: Colors.orange.shade600),
-            const SizedBox(width: 8),
-            const Text('Void Transaction'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Transaction #${transaction.orderNumber}'),
-            Text('Amount: \$${transaction.total.toStringAsFixed(2)}'),
-            const SizedBox(height: 16),
-            const Text(
-              'Please provide a reason for voiding this transaction:',
-              style: TextStyle(fontWeight: FontWeight.bold),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning, color: Colors.orange.shade600),
+              const SizedBox(width: 8),
+              const Text('Void Transaction'),
+            ],
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Transaction #${transaction.orderNumber}'),
+                Text('Amount: \$${transaction.total.toStringAsFixed(2)}'),
+                const SizedBox(height: 16),
+                const Text(
+                  'Please select a reason for voiding this transaction:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  height: 200,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListView.builder(
+                    itemCount: predefinedReasons.length,
+                    itemBuilder: (context, index) {
+                      final reason = predefinedReasons[index];
+                      return RadioListTile<String>(
+                        title: Text(reason),
+                        value: reason,
+                        groupValue: selectedReason,
+                        onChanged: (value) {
+                          setState(() {
+                            selectedReason = value;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ),
+                if (selectedReason == 'Other (specify below)') ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: customReasonController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      hintText: 'Please specify the reason...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: reasonController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: 'e.g., Created by mistake, Customer requested refund',
-                border: OutlineInputBorder(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (selectedReason == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please select a reason')),
+                  );
+                  return;
+                }
+                if (selectedReason == 'Other (specify below)' &&
+                    customReasonController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please specify the custom reason'),
+                    ),
+                  );
+                  return;
+                }
+
+                final finalReason = selectedReason == 'Other (specify below)'
+                    ? customReasonController.text.trim()
+                    : selectedReason!;
+                Navigator.of(context).pop(finalReason);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
               ),
+              child: const Text('Void Transaction'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (reasonController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please provide a reason')),
-                );
-                return;
-              }
-              Navigator.of(context).pop(true);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Void Transaction'),
-          ),
-        ],
       ),
     );
 
-    if (confirmed == true && reasonController.text.trim().isNotEmpty) {
+    if (confirmedReason != null) {
       try {
         // Update the transaction with void status and reason
         final voidedTransaction = transaction.copyWith(
           status: ServiceOrderStatus.cancelled,
           notes:
-              '${transaction.notes ?? ''}\n\nVOIDED: ${reasonController.text.trim()}\nVoided by: ${DateTime.now().toString()}',
+              '${transaction.notes ?? ''}\n\nVOIDED: $confirmedReason\nVoided by: ${DateTime.now().toString()}',
         );
 
         await FirebaseService.updateServiceOrder(voidedTransaction);
@@ -2236,6 +2316,198 @@ class _DailySummaryReportState extends State<_DailySummaryReport> {
         }
       }
     }
+  }
+
+  void _showOrderDetailsModal(ServiceOrder transaction) {
+    final items = _transactionItems[transaction.id] ?? [];
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: Container(
+          width: 800,
+          height: 600,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Order Details - ${transaction.orderNumber}',
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Basic Info
+                      _buildDetailSection('Basic Information', [
+                        _buildDetailRow(
+                          'Order Number:',
+                          transaction.orderNumber,
+                        ),
+                        _buildDetailRow(
+                          'Customer:',
+                          transaction.customerName ?? 'Walk-in',
+                        ),
+                        _buildDetailRow(
+                          'Status:',
+                          transaction.status
+                              .toString()
+                              .split('.')
+                              .last
+                              .toUpperCase(),
+                        ),
+                        _buildDetailRow(
+                          'Created:',
+                          '${transaction.createdAt.day}/${transaction.createdAt.month}/${transaction.createdAt.year} ${transaction.createdAt.hour.toString().padLeft(2, '0')}:${transaction.createdAt.minute.toString().padLeft(2, '0')}',
+                        ),
+                        if (transaction.completedAt != null)
+                          _buildDetailRow(
+                            'Completed:',
+                            '${transaction.completedAt!.day}/${transaction.completedAt!.month}/${transaction.completedAt!.year} ${transaction.completedAt!.hour.toString().padLeft(2, '0')}:${transaction.completedAt!.minute.toString().padLeft(2, '0')}',
+                          ),
+                      ]),
+                      const SizedBox(height: 20),
+
+                      // Services
+                      _buildDetailSection(
+                        'Services & Technicians',
+                        items
+                            .map(
+                              (item) => _buildDetailRow(
+                                '${item.serviceName}:',
+                                '${item.technicianName} - \$${item.finalPrice.toStringAsFixed(2)} (Qty: ${item.quantity})',
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Discounts
+                      if (transaction.appliedDiscounts.isNotEmpty) ...[
+                        _buildDetailSection(
+                          'Applied Discounts',
+                          transaction.appliedDiscounts
+                              .map(
+                                (discount) => _buildDetailRow(
+                                  '${discount.name}:',
+                                  discount.type == DiscountType.percentage
+                                      ? '${discount.value}% (-\$${discount.calculateDiscount(transaction.subtotal).toStringAsFixed(2)})'
+                                      : '-\$${discount.value.toStringAsFixed(2)}',
+                                ),
+                              )
+                              .toList(),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+
+                      // Payment Info
+                      _buildDetailSection('Payment Information', [
+                        _buildDetailRow(
+                          'Subtotal:',
+                          '\$${transaction.subtotal.toStringAsFixed(2)}',
+                        ),
+                        _buildDetailRow(
+                          'Tax:',
+                          '\$${transaction.taxAmount.toStringAsFixed(2)}',
+                        ),
+                        if (transaction.appliedDiscounts.isNotEmpty)
+                          _buildDetailRow(
+                            'Total Discounts:',
+                            '-\$${transaction.discountAmount.toStringAsFixed(2)}',
+                          ),
+                        _buildDetailRow(
+                          'Total:',
+                          '\$${transaction.total.toStringAsFixed(2)}',
+                          isTotal: true,
+                        ),
+                        if (transaction.paymentMethod != null)
+                          _buildDetailRow(
+                            'Payment Method:',
+                            transaction.paymentMethod!.toUpperCase(),
+                          ),
+                        _buildDetailRow(
+                          'Total Paid So Far:',
+                          '\$${transaction.totalPaidSoFar.toStringAsFixed(2)}',
+                        ),
+                        _buildDetailRow(
+                          'Payment Status:',
+                          transaction.isPaid ? 'PAID' : 'PENDING',
+                        ),
+                        if (transaction.paidAt != null)
+                          _buildDetailRow(
+                            'Paid At:',
+                            '${transaction.paidAt!.day}/${transaction.paidAt!.month}/${transaction.paidAt!.year} ${transaction.paidAt!.hour.toString().padLeft(2, '0')}:${transaction.paidAt!.minute.toString().padLeft(2, '0')}',
+                          ),
+                      ]),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailSection(String title, List<Widget> children) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, {bool isTotal = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+              color: isTotal ? Colors.green : null,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -2321,73 +2593,130 @@ class _TransactionDetailsReportState extends State<_TransactionDetailsReport> {
   }
 
   Future<void> _voidTransaction(ServiceOrder transaction) async {
-    final TextEditingController reasonController = TextEditingController();
+    final List<String> predefinedReasons = [
+      'Created by mistake',
+      'Customer requested refund',
+      'Incorrect service/price',
+      'Payment issue',
+      'Service not completed',
+      'Duplicate transaction',
+      'System error',
+      'Other (specify below)',
+    ];
 
-    final bool? confirmed = await showDialog<bool>(
+    String? selectedReason;
+    final TextEditingController customReasonController =
+        TextEditingController();
+
+    final String? confirmedReason = await showDialog<String>(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            Icon(Icons.warning, color: Colors.orange.shade600),
-            const SizedBox(width: 8),
-            const Text('Void Transaction'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Transaction #${transaction.orderNumber}'),
-            Text('Amount: \$${transaction.total.toStringAsFixed(2)}'),
-            const SizedBox(height: 16),
-            const Text(
-              'Please provide a reason for voiding this transaction:',
-              style: TextStyle(fontWeight: FontWeight.bold),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setState) => AlertDialog(
+          title: Row(
+            children: [
+              Icon(Icons.warning, color: Colors.orange.shade600),
+              const SizedBox(width: 8),
+              const Text('Void Transaction'),
+            ],
+          ),
+          content: SizedBox(
+            width: 400,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Transaction #${transaction.orderNumber}'),
+                Text('Amount: \$${transaction.total.toStringAsFixed(2)}'),
+                const SizedBox(height: 16),
+                const Text(
+                  'Please select a reason for voiding this transaction:',
+                  style: TextStyle(fontWeight: FontWeight.bold),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  height: 200,
+                  decoration: BoxDecoration(
+                    border: Border.all(color: Colors.grey.shade300),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: ListView.builder(
+                    itemCount: predefinedReasons.length,
+                    itemBuilder: (context, index) {
+                      final reason = predefinedReasons[index];
+                      return RadioListTile<String>(
+                        title: Text(reason),
+                        value: reason,
+                        groupValue: selectedReason,
+                        onChanged: (value) {
+                          setState(() {
+                            selectedReason = value;
+                          });
+                        },
+                      );
+                    },
+                  ),
+                ),
+                if (selectedReason == 'Other (specify below)') ...[
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: customReasonController,
+                    maxLines: 2,
+                    decoration: const InputDecoration(
+                      hintText: 'Please specify the reason...',
+                      border: OutlineInputBorder(),
+                    ),
+                  ),
+                ],
+              ],
             ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: reasonController,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                hintText: 'e.g., Created by mistake, Customer requested refund',
-                border: OutlineInputBorder(),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(null),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                if (selectedReason == null) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('Please select a reason')),
+                  );
+                  return;
+                }
+                if (selectedReason == 'Other (specify below)' &&
+                    customReasonController.text.trim().isEmpty) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('Please specify the custom reason'),
+                    ),
+                  );
+                  return;
+                }
+
+                final finalReason = selectedReason == 'Other (specify below)'
+                    ? customReasonController.text.trim()
+                    : selectedReason!;
+                Navigator.of(context).pop(finalReason);
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.red,
+                foregroundColor: Colors.white,
               ),
+              child: const Text('Void Transaction'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          ElevatedButton(
-            onPressed: () {
-              if (reasonController.text.trim().isEmpty) {
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Please provide a reason')),
-                );
-                return;
-              }
-              Navigator.of(context).pop(true);
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.red,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Void Transaction'),
-          ),
-        ],
       ),
     );
 
-    if (confirmed == true && reasonController.text.trim().isNotEmpty) {
+    if (confirmedReason != null) {
       try {
         // Update the transaction with void status and reason
         final voidedTransaction = transaction.copyWith(
           status: ServiceOrderStatus.cancelled,
           notes:
-              '${transaction.notes ?? ''}\n\nVOIDED: ${reasonController.text.trim()}\nVoided by: ${DateTime.now().toString()}',
+              '${transaction.notes ?? ''}\n\nVOIDED: $confirmedReason\nVoided by: ${DateTime.now().toString()}',
         );
 
         await FirebaseService.updateServiceOrder(voidedTransaction);
@@ -2530,7 +2859,7 @@ class _TransactionDetailsReportState extends State<_TransactionDetailsReport> {
                         ),
                         DataColumn(
                           label: Text(
-                            'Services & Technicians',
+                            'Services & Technicians (Click for Details)',
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
                         ),
@@ -2563,6 +2892,8 @@ class _TransactionDetailsReportState extends State<_TransactionDetailsReport> {
                         final items = _transactionItems[transaction.id] ?? [];
 
                         return DataRow(
+                          onSelectChanged: (_) =>
+                              _showOrderDetailsModal(transaction),
                           cells: [
                             DataCell(Text(transaction.orderNumber)),
                             DataCell(
@@ -2590,21 +2921,42 @@ class _TransactionDetailsReportState extends State<_TransactionDetailsReport> {
                                 constraints: const BoxConstraints(
                                   maxWidth: 200,
                                 ),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: items.map((item) {
-                                    return Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                        vertical: 1,
-                                      ),
-                                      child: Text(
-                                        '${item.serviceName} - ${item.technicianName}',
-                                        style: const TextStyle(fontSize: 12),
-                                        overflow: TextOverflow.ellipsis,
-                                      ),
-                                    );
-                                  }).toList(),
+                                child: SingleChildScrollView(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      ...items.take(3).map((item) {
+                                        return Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 1,
+                                          ),
+                                          child: Text(
+                                            '${item.serviceName} - ${item.technicianName}',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                            ),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        );
+                                      }),
+                                      if (items.length > 3)
+                                        Padding(
+                                          padding: const EdgeInsets.symmetric(
+                                            vertical: 1,
+                                          ),
+                                          child: Text(
+                                            '...and ${items.length - 3} more (tap row for details)',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              fontStyle: FontStyle.italic,
+                                              color: Colors.blue,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
+                                  ),
                                 ),
                               ),
                             ),
@@ -2773,5 +3125,197 @@ class _TransactionDetailsReportState extends State<_TransactionDetailsReport> {
       default:
         return Colors.grey.shade700;
     }
+  }
+
+  void _showOrderDetailsModal(ServiceOrder transaction) {
+    final items = _transactionItems[transaction.id] ?? [];
+
+    showDialog(
+      context: context,
+      builder: (context) => Dialog(
+        child: Container(
+          width: 800,
+          height: 600,
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(
+                    'Order Details - ${transaction.orderNumber}',
+                    style: const TextStyle(
+                      fontSize: 24,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  IconButton(
+                    onPressed: () => Navigator.of(context).pop(),
+                    icon: const Icon(Icons.close),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 20),
+              Expanded(
+                child: SingleChildScrollView(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // Basic Info
+                      _buildDetailSection('Basic Information', [
+                        _buildDetailRow(
+                          'Order Number:',
+                          transaction.orderNumber,
+                        ),
+                        _buildDetailRow(
+                          'Customer:',
+                          transaction.customerName ?? 'Walk-in',
+                        ),
+                        _buildDetailRow(
+                          'Status:',
+                          transaction.status
+                              .toString()
+                              .split('.')
+                              .last
+                              .toUpperCase(),
+                        ),
+                        _buildDetailRow(
+                          'Created:',
+                          '${transaction.createdAt.day}/${transaction.createdAt.month}/${transaction.createdAt.year} ${transaction.createdAt.hour.toString().padLeft(2, '0')}:${transaction.createdAt.minute.toString().padLeft(2, '0')}',
+                        ),
+                        if (transaction.completedAt != null)
+                          _buildDetailRow(
+                            'Completed:',
+                            '${transaction.completedAt!.day}/${transaction.completedAt!.month}/${transaction.completedAt!.year} ${transaction.completedAt!.hour.toString().padLeft(2, '0')}:${transaction.completedAt!.minute.toString().padLeft(2, '0')}',
+                          ),
+                      ]),
+                      const SizedBox(height: 20),
+
+                      // Services
+                      _buildDetailSection(
+                        'Services & Technicians',
+                        items
+                            .map(
+                              (item) => _buildDetailRow(
+                                '${item.serviceName}:',
+                                '${item.technicianName} - \$${item.finalPrice.toStringAsFixed(2)} (Qty: ${item.quantity})',
+                              ),
+                            )
+                            .toList(),
+                      ),
+                      const SizedBox(height: 20),
+
+                      // Discounts
+                      if (transaction.appliedDiscounts.isNotEmpty) ...[
+                        _buildDetailSection(
+                          'Applied Discounts',
+                          transaction.appliedDiscounts
+                              .map(
+                                (discount) => _buildDetailRow(
+                                  '${discount.name}:',
+                                  discount.type == DiscountType.percentage
+                                      ? '${discount.value}% (-\$${discount.calculateDiscount(transaction.subtotal).toStringAsFixed(2)})'
+                                      : '-\$${discount.value.toStringAsFixed(2)}',
+                                ),
+                              )
+                              .toList(),
+                        ),
+                        const SizedBox(height: 20),
+                      ],
+
+                      // Payment Info
+                      _buildDetailSection('Payment Information', [
+                        _buildDetailRow(
+                          'Subtotal:',
+                          '\$${transaction.subtotal.toStringAsFixed(2)}',
+                        ),
+                        _buildDetailRow(
+                          'Tax:',
+                          '\$${transaction.taxAmount.toStringAsFixed(2)}',
+                        ),
+                        if (transaction.appliedDiscounts.isNotEmpty)
+                          _buildDetailRow(
+                            'Total Discounts:',
+                            '-\$${transaction.discountAmount.toStringAsFixed(2)}',
+                          ),
+                        _buildDetailRow(
+                          'Total:',
+                          '\$${transaction.total.toStringAsFixed(2)}',
+                          isTotal: true,
+                        ),
+                        if (transaction.paymentMethod != null)
+                          _buildDetailRow(
+                            'Payment Method:',
+                            transaction.paymentMethod!.toUpperCase(),
+                          ),
+                        _buildDetailRow(
+                          'Total Paid So Far:',
+                          '\$${transaction.totalPaidSoFar.toStringAsFixed(2)}',
+                        ),
+                        _buildDetailRow(
+                          'Payment Status:',
+                          transaction.isPaid ? 'PAID' : 'PENDING',
+                        ),
+                        if (transaction.paidAt != null)
+                          _buildDetailRow(
+                            'Paid At:',
+                            '${transaction.paidAt!.day}/${transaction.paidAt!.month}/${transaction.paidAt!.year} ${transaction.paidAt!.hour.toString().padLeft(2, '0')}:${transaction.paidAt!.minute.toString().padLeft(2, '0')}',
+                          ),
+                      ]),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailSection(String title, List<Widget> children) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              title,
+              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
+            ...children,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetailRow(String label, String value, {bool isTotal = false}) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: isTotal ? 16 : 14,
+              fontWeight: isTotal ? FontWeight.bold : FontWeight.w500,
+              color: isTotal ? Colors.green : null,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
